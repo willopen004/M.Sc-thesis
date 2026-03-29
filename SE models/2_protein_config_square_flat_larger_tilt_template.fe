@@ -1,0 +1,1437 @@
+
+
+/*
+			Y
+			|						A-----B
+			|					    | 	 /
+			|					   	|  	/					
+-X----------O-----------X		    |  /
+			|					    | /   
+			|			  			C   
+			|								   
+		   -Y
+*/
+
+procedure res() {
+	load datafilename;
+};
+
+CONSTRAINT_TOLERANCE 1e-6
+
+PARAMETER  CONVERGE_TOLERANCE 	= 1e-8	// tolerance for energy discrepancies as a fraction of the total energy
+
+PARAMETER NUMBER_OF_PROTEINS = 2 // ********** runtime adjustable **********
+
+PARAMETER spin_angle_deg = 360 / 6; // 120-3P, 90-4P, 72-5P, 60-6P, 45-8P, 40-9P, 36-10P, 30-12P  
+
+PARAMETER spin_angle = spin_angle_deg * PI / 180;
+
+PARAMETER GRAPHIC_STRING = 0;
+
+PARAMETER Dist = DIST_VAR; // distance between proteins (concentration); ********** runtime adjustable **********
+
+PARAMETER tilt_B_deg = TILT_B_VAR // tilting of protein B ********** runtime adjustable **********
+PARAMETER tilt_B     = tilt_B_deg*PI/180
+
+PARAMETER tilt_E_deg = TILT_E_VAR // tilting of protein E ********** runtime adjustable **********
+PARAMETER tilt_E     = -tilt_E_deg*PI/180
+
+PARAMETER P_B_hight = HEIGHT_B_VAR // hight of protein B ********** runtime adjustable **********
+
+PARAMETER P_E_hight = HEIGHT_E_VAR // hight of protein E ********** runtime adjustable **********
+
+PARAMETER rad_P2 = 5     //  radius of protein 2; ********** runtime adjustable **********
+
+PARAMETER rad_P5 = 5     //  radius of protein 3; ********** runtime adjustable **********
+
+PARAMETER plane_circle_rad = rad_P2*100
+
+PARAMETER AVG_CURVATURE = 0.05;  // average curvature ********** runtime adjustable **********
+
+PARAMETER BIG_SPHERE_RADIUS = 2 / AVG_CURVATURE;  // Radius of sphere based on average curvature 
+
+PARAMETER  	DIHEDRAL_MAX		= 0.02	//maximum dihedral angle
+
+PARAMETER FIRST_PROTEIN_CONSTRAINT	= 10
+
+PARAMETER 	LENGTH_SMALL_L1		= 1;
+
+PARAMETER LENGTH_SMALL 			= LENGTH_SMALL_L1		//initialise length_small
+
+PARAMETER	NUM_PROS		= 2		// number of proteins
+
+
+PARAMETER	RADIUS_SMALL_P2		= 5*rad_P2	// distance from protein beyond which triangulation starts to coarsen
+
+
+PARAMETER	RADIUS_SMALL_P5		= 5*rad_P5	// distance from protein beyond which triangulation starts to coarsen
+
+PARAMETER	MIN_DIST		= 5*rad_P2	// distance between proteins beyond which LENGTH_SMALL_L1 is smaller
+
+//beyond a distance of RADIUS_SMALL from the protein the minimum edge length depends on this distance and is calculate by
+//minimum edge length = length_small * (distance/RADIUS_SMALL)^LENGTH_SCALING
+
+PARAMETER  	LENGTH_SCALING		= 1.0
+
+PARAMETER 	COLORSCALE		= 1.5		//length of edges changes by this factor in one color step
+
+PARAMETER	COLOR_DOWN_CHANCE	= 0.2		//probability that a face that has too high a color gets stepped down
+
+PARAMETER  	DIHEDRAL_TOLERANCE_FACTOR	= 2	//dihedral angle can actually be this times as large as dihedral_max
+
+PARAMETER  	MEMBRANE_TENSION	= 0;  // tension of the membrane in units of kbt/nm^2 ********** runtime adjustable **********
+
+//the maximum edge length is simply the minimum edge length multplied by the factor RFACTOR
+PARAMETER  	RFACTOR		 	= 3
+
+//the minimum dihedral_angle is a factor of RFACTOR smaller than DIHEDRAL_MAX
+PARAMETER	DFACTOR			= 3
+
+//to do with the geometry
+
+PARAMETER Average_curvature_P_general = 0.016 // with rad 5 the max value of the Average_curvature_P_general is 0.4 ********** runtime adjustable **********
+PARAMETER Average_curvature_P_top = Average_curvature_P_general // with rad 5 the max value of the Average_curvature_P_general is 0.4 ********** runtime adjustable **********
+PARAMETER Average_curvature_P_rest = Average_curvature_P_general// with rad 5 the max value of the Average_curvature_P_general is 0.4 ********** runtime adjustable **********
+
+PARAMETER Curv_P1_fam = Curv_P1_fam_VAR
+PARAMETER Curv_P2_fam = Curv_P2_fam_VAR
+
+PARAMETER Average_curvature_P1 = Average_curvature_P_general // needs to fit the proportions of rad 
+PARAMETER Average_curvature_P2 = P_B_CURVA_VAR // needs to fit the proportions of rad 
+PARAMETER Average_curvature_P3 = Average_curvature_P_general  // needs to fit the proportions of rad 
+PARAMETER Average_curvature_P4 = Average_curvature_P_general
+PARAMETER Average_curvature_P5 = P_E_CURVA_VAR
+
+PARAMETER   COLOR_P_B = P_B_COLOR_VAR
+PARAMETER   COLOR_P_E = P_E_COLOR_VAR
+
+// Define Rcap based on rad_P and Average_curvature_P for each protein
+PARAMETER Rcap_P1 = 2 / Average_curvature_P1
+PARAMETER Rcap_P2 = 2 / Average_curvature_P2
+PARAMETER Rcap_P3 = 2 / Average_curvature_P3
+PARAMETER Rcap_P4 = 2 / Average_curvature_P4
+PARAMETER Rcap_P5 = 2 / Average_curvature_P5
+
+// Define Hcap using Rcap and Average_curvature_protein
+PARAMETER Hcap_P2 = Rcap_P2 - sqrt(Rcap_P2^2 - rad_P2^2);
+PARAMETER Hcap_P5 = Rcap_P5 - sqrt(Rcap_P5^2 - rad_P5^2)
+
+/***** BEGIN PATCH: PURE PLANAR, NO BIG_SPHERE_RADIUS *****/
+
+/* --- decouple from sphere --- */
+PARAMETER ZC := 0
+
+/* --- single shared base plane for all bases --- */
+PARAMETER BASE_PLANE_Z := ZC
+
+/* --- planar radii (no sphere, no sin/cos of Dist/R) --- */
+PARAMETER R_PERIM1 := Dist/2     /* radius for B, E */
+PARAMETER R_PERIM2 := plane_circle_rad   /* radius for C, D, F */
+
+/* ---- central cap A (plane origin) ---- */
+PARAMETER Ax := 0
+PARAMETER Ay := 0
+PARAMETER Az := (P_B_hight + P_E_hight) / 2
+
+
+/* ---- perimeter cap B (on -x axis) ---- */
+PARAMETER Bx := -R_PERIM1
+PARAMETER By :=  0
+PARAMETER Bz :=  P_B_hight
+
+/* B base on the shared plane */
+PARAMETER BaseB_x := Bx
+PARAMETER BaseB_y := By
+PARAMETER BaseB_z := P_B_hight
+
+/* ---- perimeter cap C (farther on -x axis) ---- */
+PARAMETER Cx := -R_PERIM2
+PARAMETER Cy :=  0
+PARAMETER Cz :=  BASE_PLANE_Z
+
+
+/* ---- perimeter cap D (farther on +x axis) ---- */
+PARAMETER Dx :=  R_PERIM2
+PARAMETER Dy :=  0
+PARAMETER Dz :=  BASE_PLANE_Z
+
+/* ---- perimeter cap E (on +x axis) ---- */
+PARAMETER Ex :=  R_PERIM1
+PARAMETER Ey :=  0
+PARAMETER Ez :=  P_E_hight
+
+PARAMETER Plane_offset_E := 1
+PARAMETER Base_scaling_E := 1
+PARAMETER BaseE_x := Ex
+PARAMETER BaseE_y := Ey
+PARAMETER BaseE_z := P_E_hight
+
+/* ---- point F (on -y axis) ---- */
+PARAMETER Fx := 0
+PARAMETER Fy := -R_PERIM2
+PARAMETER Fz := BASE_PLANE_Z
+
+/* ---- cap axes are vertical (out of plane) ---- */
+PARAMETER dirB_x := sin(tilt_B)
+PARAMETER dirB_y := 0
+PARAMETER dirB_z := cos(tilt_B)
+
+PARAMETER dirE_x := sin(tilt_E)
+PARAMETER dirE_y := 0
+PARAMETER dirE_z := cos(tilt_E)
+
+/* ---- cap tops (heights above the shared plane) ---- */
+PARAMETER B_topx := BaseB_x + Hcap_P2*dirB_x
+PARAMETER B_topy := BaseB_y + Hcap_P2*dirB_y
+PARAMETER B_topz := BaseB_z + Hcap_P2*dirB_z
+
+PARAMETER E_topx := BaseE_x + Hcap_P5*dirE_x
+PARAMETER E_topy := BaseE_y + Hcap_P5*dirE_y
+PARAMETER E_topz := BaseE_z + Hcap_P5*dirE_z
+
+/* ---- small-sphere centres (measured vertically) ---- */
+PARAMETER CtrB_x := BaseB_x - (Rcap_P2 - Hcap_P2)*dirB_x
+PARAMETER CtrB_y := BaseB_y - (Rcap_P2 - Hcap_P2)*dirB_y
+PARAMETER CtrB_z := BaseB_z - (Rcap_P2 - Hcap_P2)*dirB_z
+
+PARAMETER CtrE_x := BaseE_x - (Rcap_P5 - Hcap_P5)*dirE_x
+PARAMETER CtrE_y := BaseE_y - (Rcap_P5 - Hcap_P5)*dirE_y
+PARAMETER CtrE_z := BaseE_z - (Rcap_P5 - Hcap_P5)*dirE_z
+
+/* ---- planar triangle centroids (no renormalisation) ---- */
+PARAMETER TACF_x := (Ax + Fx + Cx)/3
+PARAMETER TACF_y := (Ay + Fy + Cy)/3
+PARAMETER TACF_z := BASE_PLANE_Z
+
+PARAMETER TADF_x := (Ax + Fx + Dx)/3
+PARAMETER TADF_y := (Ay + Fy + Dy)/3
+PARAMETER TADF_z := BASE_PLANE_Z
+
+/***************
+ * Periphery points (tilted planes, robust for any tilt)
+ ***************/
+
+/***************
+ * Periphery points (planar interpolation in local tilted planes)
+ ***************/
+
+/* --- B periphery: toward A (using full 3D projection into B's base plane) --- */
+PARAMETER wB_A_x := Ax - BaseB_x
+PARAMETER wB_A_y := Ay - BaseB_y
+PARAMETER wB_A_z := Az - BaseB_z
+
+/* projection of wB_A onto plane normal dirB */
+PARAMETER dotB_A := wB_A_x*dirB_x + wB_A_y*dirB_y + wB_A_z*dirB_z
+
+PARAMETER wBpar_A_x := wB_A_x - dotB_A*dirB_x
+PARAMETER wBpar_A_y := wB_A_y - dotB_A*dirB_y
+PARAMETER wBpar_A_z := wB_A_z - dotB_A*dirB_z
+
+PARAMETER lenBpar_A := sqrt(wBpar_A_x^2 + wBpar_A_y^2 + wBpar_A_z^2)
+
+/* point on B's base circle at distance rad_P2 in the direction of A, inside the tilted plane */
+PARAMETER B_Ax := BaseB_x + rad_P2*wBpar_A_x/lenBpar_A
+PARAMETER B_Ay := BaseB_y + rad_P2*wBpar_A_y/lenBpar_A
+PARAMETER B_Az := BaseB_z + rad_P2*wBpar_A_z/lenBpar_A
+
+
+PARAMETER NB_C    := rad_P2 / sqrt( (Cx - BaseB_x)^2 + (Cy - BaseB_y)^2 )
+PARAMETER B_Cx    := BaseB_x + (Cx     - BaseB_x)*NB_C
+PARAMETER B_Cy    := BaseB_y + (Cy     - BaseB_y)*NB_C
+PARAMETER B_Cz    := P_B_hight
+
+PARAMETER NB_TACF := rad_P2 / sqrt( (TACF_x - BaseB_x)^2 + (TACF_y - BaseB_y)^2 )
+PARAMETER B_TACFx := BaseB_x + (TACF_x - BaseB_x)*NB_TACF
+PARAMETER B_TACFy := BaseB_y + (TACF_y - BaseB_y)*NB_TACF
+PARAMETER B_TACFz := P_B_hight
+
+/* --- E periphery: toward D, A, and TADF --- */
+PARAMETER NE_D    := rad_P5 / sqrt( (Dx - BaseE_x)^2 + (Dy - BaseE_y)^2 )
+PARAMETER E_Dx    := BaseE_x + (Dx     - BaseE_x)*NE_D
+PARAMETER E_Dy    := BaseE_y + (Dy     - BaseE_y)*NE_D
+PARAMETER E_Dz    := P_E_hight
+
+/* --- E periphery: toward A (using full 3D projection into E's base plane) --- */
+PARAMETER wE_A_x := Ax - BaseE_x
+PARAMETER wE_A_y := Ay - BaseE_y
+PARAMETER wE_A_z := Az - BaseE_z
+
+/* projection of wE_A onto plane normal dirE */
+PARAMETER dotE_A := wE_A_x*dirE_x + wE_A_y*dirE_y + wE_A_z*dirE_z
+
+PARAMETER wEpar_A_x := wE_A_x - dotE_A*dirE_x
+PARAMETER wEpar_A_y := wE_A_y - dotE_A*dirE_y
+PARAMETER wEpar_A_z := wE_A_z - dotE_A*dirE_z
+
+PARAMETER lenEpar_A := sqrt(wEpar_A_x^2 + wEpar_A_y^2 + wEpar_A_z^2)
+
+/* point on E's base circle at distance rad_P5 in the direction of A, inside the tilted plane */
+PARAMETER E_Ax := BaseE_x + rad_P5*wEpar_A_x/lenEpar_A
+PARAMETER E_Ay := BaseE_y + rad_P5*wEpar_A_y/lenEpar_A
+PARAMETER E_Az := BaseE_z + rad_P5*wEpar_A_z/lenEpar_A
+
+
+PARAMETER NE_TADF := rad_P5 / sqrt( (TADF_x - BaseE_x)^2 + (TADF_y - BaseE_y)^2 )
+PARAMETER E_TADFx := BaseE_x + (TADF_x - BaseE_x)*NE_TADF
+PARAMETER E_TADFy := BaseE_y + (TADF_y - BaseE_y)*NE_TADF
+PARAMETER E_TADFz := P_E_hight
+
+
+/***** END PATCH *****/
+
+
+/***** END PATCH: FLAT-PLANE VERSION *****/
+
+
+define facet attribute Ref_Lev integer
+define vertex attribute con integer
+define edge attribute lengoal real
+define edge attribute lengoalset real
+   
+// surface bending energy
+quantity Je energy modulus 1 method star_perp_sq_mean_curvature global 
+//quantity farea energy modulus MEMBRANE_TENSION method facet_area global
+
+
+view_transform_generators 2
+
+// generator A: rotation 180 deg about y
+-1    0     0    0
+0     1     0    0
+0     0     1    0
+0     0     0    1
+
+// generator B: rotation about z
+cos(3*spin_angle)     -sin(3*spin_angle)    0         -0
+sin(3*spin_angle)      cos(3*spin_angle)    0         -0
+0                      0                1          0
+0                      0                0          1
+
+//////////////////////////
+
+// ===== Walls (planes through (0,0,ZC)) =====
+// Generic form for plane(P,Q):
+// (Py*(Qz-ZC)-(Pz-ZC)*Qy)*x + ((Pz-ZC)*Qx-Px*(Qz-ZC))*y + (Px*Qy-Py*Qx)*(z-ZC) = 0
+
+constraint 1   // plane(E,A,B)
+formula: y = 0
+
+constraint 2   // plane(F,C)
+formula: x^2 + y^2 = (plane_circle_rad)^2
+
+// ===== Protein caps and bases (small spheres) =====
+
+constraint 10    // B cap
+formula: (x - CtrB_x)^2 + (y - CtrB_y)^2 + (z - CtrB_z)^2 = Rcap_P2^2
+
+constraint 11   // base for B
+formula: (x - BaseB_x)^2 + (y - BaseB_y)^2 + (z - BaseB_z)^2 = rad_P2^2
+
+constraint 12   // E cap
+formula: (x - CtrE_x)^2 + (y - CtrE_y)^2 + (z - CtrE_z)^2 = Rcap_P5^2
+
+constraint 13   // base for E
+formula: (x - BaseE_x)^2 + (y - BaseE_y)^2 + (z - BaseE_z)^2 = rad_P5^2
+
+
+vertices
+/* tops */
+1   Ax   Ay   Az constraints 1     // A (center)
+2   B_topx   B_topy   B_topz constraints 1 10     // B (upper-left)
+3   Cx   Cy   Cz constraints 1 2    // C (upper-right)
+4   Dx   Dy   Dz constraints 1 2   // D (lower-right)
+5   E_topx   E_topy   E_topz constraints 1 12     // E (lower-left)
+6   Fx		Fy			Fz constraints 2 
+
+/* triangle centers on big sphere */
+7   TACF_x   TACF_y   TACF_z        // ⊙(A,B,C)
+8   TADF_x   TADF_y   TADF_z        // ⊙(A,C,D)
+
+
+/* B periphery (A, C, TACF) */
+9  B_Ax     B_Ay     B_Az constraints 1 10 11        // B→A
+10  B_Cx     B_Cy     B_Cz constraints 1 10 11        // B→C
+11  B_TACFx  B_TACFy  B_TACFz constraints 10 11      // B→TACF
+
+/* E periphery (D, A, TADF) */
+12  E_Dx     E_Dy     E_Dz constraints 1 12 13        // E→D
+13  E_Ax     E_Ay     E_Az constraints 1 12 13        // E→A
+14  E_TADFx  E_TADFy  E_TADFz constraints 12 13       // E→TADF
+
+//101  0 0 0  // Origin
+//102  20 0 0  // X-axis direction
+//103  0 20 0  // Y-axis direction
+//104  0 0 20  // Z-axis direction
+
+
+/* add after your current C-periphery vertices */
+
+edges
+1 1 9 constraints 1 // A-BA
+2 9 2 constraints 1 10 // BA-B_top
+3 2 10 constraints 1 10 // B_top-BC
+4 10 3 constraints 1 // BC-C
+5 3 6 constraints 2 // C-F
+6 6 4 constraints 2 // F-D
+7 4 12 constraints 1 // D-ED
+8 12 5 constraints 1 12 // ED-E_top
+9 5 13 constraints 1 12 // E_top-EA
+10 13 1 constraints 1 // EA-A
+
+11 12 14 constraints 12 13 // ED-EADF
+12 14 13 constraints 12 13// EADF-EA
+
+13 9 11 constraints 10 11// BA-BACF
+14 11 10 constraints 10 11 // BACF-BC
+
+15 4 8 // D-ADF
+16 1 8 // A-ADF
+17 1 7 // A-ACF
+18 3 7 // C-ACF
+19 6 8 // F-ADF
+20 6 7 // F-ACF
+
+21 14 8 // EADF-ADF
+22 11 7 // BACF-ACF
+
+//101  101 102 color red
+//102  101 103 color yellow
+//103  101 104 color green
+
+faces
+
+/* A/B/C rim caps around A_top, B_top, C_top (ACF wedge) */
+1 2 3 -14 -13 color COLOR_P_B constraint 10 // B protein
+
+2 8 9 -12 -11 color COLOR_P_E constraint 12 // E protein
+
+3 1 13 22 -17 
+
+4 4 18 -22 14
+
+5 7 11 21 -15
+
+6 10 16 -21 12 
+
+7 15 -19 6 
+
+8 20 -18 5
+
+9 -16 17 -20 19 
+
+read
+
+
+
+
+set edge tension 0
+set facet tension 0
+
+//showq;
+//show_trans "R5z";
+//show_trans "15z15r";
+
+
+//returns whether a given edge id corresponds to an edge in the middle of a protein (i.e. not on its boundary)
+function integer e_in_protein_middle(integer e_id) {
+	if edges[e_id].__e_constraint_list[1] = 1 then {
+		if edges[e_id].__e_constraint_list[2] >= FIRST_PROTEIN_CONSTRAINT then {
+			return 1;
+		};
+	};
+	return 0;
+};
+
+/*
+procedure star(real vid){
+  local ind;
+  printf "== Vertex %d ==\n",vid;
+  printf "Edges: ";
+  foreach edge ee do
+    if (ee.vertex[1].id==vid or ee.vertex[2].id==vid) then
+      printf " %d(%d->%d)",ee.id,ee.vertex[1].id,ee.vertex[2].id;
+  printf "\nFacets: ";
+  foreach facet ff do {
+    for (ind:=1;ind<=ff.vertex_count;ind+=1) do
+      if (ff.vertex[i].id==vid) then { printf " %d",ff.id; break; };
+  };
+  printf "\n";
+}
+*/
+
+//returns whether a given edge id corresponds to a box edge
+function integer e_on_edge(integer e_id) {
+	if edges[e_id].__e_constraint_list[1] > 1 then {
+		if edges[e_id].__e_constraint_list[2] < FIRST_PROTEIN_CONSTRAINT then {
+			return 1;
+		};
+	};
+	return 0;
+}
+
+//checks to see if any dihedral_angles are larger than they should be
+//if they are the color of the appropriate faces is increased to reduce the edge lengths
+procedure dihedral_color(real dihedral_cutoff) {
+	local temp;
+	local random1;
+	local colorav;
+	local ei; local fi;local ii;local vi;
+	local countercol;
+
+	foreach facet ff do {
+
+		// if a dihedral angle is too large increase the color of surrounding faces
+		if (ff.edges[1].dihedral > dihedral_cutoff or ff.edges[2].dihedral > dihedral_cutoff or ff.edges[3].dihedral > dihedral_cutoff) then {
+			temp :=  ff.Ref_Lev;
+			ff.Ref_Lev := temp + 1;
+		};
+
+		// if a dihedral angle is too small decease the color of surrounding faces
+		// do not apply to faces on the edge of the box since dihedrals not calculated here
+		if  (ff.edges[1].dihedral < dihedral_cutoff/DFACTOR  and ff.edges[2].dihedral < dihedral_cutoff/DFACTOR  and ff.edges[3].dihedral < dihedral_cutoff/DFACTOR
+		and (e_on_edge(ff.edges[1].id) = 0) and (e_on_edge(ff.edges[2].id) = 0) and (e_on_edge(ff.edges[3].id) = 0)) then {
+			if ff.Ref_Lev > 0 then {
+				temp := ff.Ref_Lev;
+				random1 := random;
+				if random < COLOR_DOWN_CHANCE then {
+					ff.Ref_Lev := temp - 1;
+				};
+			};
+		};
+	};
+
+	//now set each facets color to average of its own and surrounding facets colors
+	//this helps stability		
+	foreach facet ff do {
+		colorav := 0;
+		countercol := 0;
+		for (ei := 1; ei <= ff.valence; ei += 1) {
+			for (fi := 1; fi <= ff.edges[ei].valence; fi += 1) {
+				colorav += ff.edges[ei].facets[fi].Ref_Lev;
+				countercol += 1;
+			};
+		};
+		colorav := colorav/countercol;
+		random1 := random;
+		if random < (ceil(colorav) - colorav) then {
+			colorav := floor(colorav);
+		} else {
+			colorav := ceil(colorav);
+		};
+		ff.Ref_Lev := colorav;
+	};		
+		
+}
+
+//unfixes all the vertices -- required before doing refinement, coarsening or retriangulation
+procedure unfixall() {
+	printf "unfixall() start...\n";
+	unfix vertices where con >= 0;
+	printf "unfixall() complete...\n";
+}
+
+//fixes vertices on protein constraints -- required before minimising energy -- assumes constraints are turned off
+procedure fixall() {
+	printf "fixall() start...\n";
+	fix vertices where con >= FIRST_PROTEIN_CONSTRAINT;
+	printf "fixall() complete...\n";
+}
+
+//turns protein constraints on -- required before doing refinement, coarsening or retriangulation
+procedure conon() {
+	printf "conon() start...\n";
+	local ii;
+	for (ii := 1; ii <= NUM_PROS; ii += 1) {	
+		set vertex constraint FIRST_PROTEIN_CONSTRAINT-2+2*ii where con=FIRST_PROTEIN_CONSTRAINT-2+2*ii or con=FIRST_PROTEIN_CONSTRAINT-1+2*ii;
+		set vertex constraint FIRST_PROTEIN_CONSTRAINT-1+2*ii where con=FIRST_PROTEIN_CONSTRAINT-1+2*ii;
+	};
+	printf "conon() complete...\n";
+}
+
+procedure conoff() {
+	printf "conoff() start...\n";
+	set vertex con 0;
+	local ii; local cc;
+	for (cc := 1; cc < FIRST_PROTEIN_CONSTRAINT; cc+=1) {
+		set vertex con cc where on_constraint cc;
+	};
+	for (ii := 1; ii <= NUM_PROS; ii += 1) {
+		set vertex con FIRST_PROTEIN_CONSTRAINT-2+2*ii where on_constraint FIRST_PROTEIN_CONSTRAINT-2+2*ii;
+		set vertex con FIRST_PROTEIN_CONSTRAINT-1+2*ii where on_constraint FIRST_PROTEIN_CONSTRAINT-1+2*ii;
+		unset vertex constraint FIRST_PROTEIN_CONSTRAINT-2+2*ii;
+		unset vertex constraint FIRST_PROTEIN_CONSTRAINT-1+2*ii;
+	};
+	printf "conoff() complete...\n";
+}
+
+//deletes all edges smaller than they should be
+procedure coarsen() {
+	printf "coarsen() start...\n";
+	unfixall();
+	conon();
+	delete edge ee where length < ee.lengoal;
+	// there is a bug  in the line above (350)
+	conoff();
+	fixall();
+	printf "coarsen() complete...\n";
+}
+
+
+//works out what length each edge should be
+// works out what length each edge should be (now includes protein C2)
+procedure setlengoals(){
+  local colorlevel, fi;
+  local xpos, ypos, zpos;
+  local distance_first, distance_second, distance_third, distance_forth, distance_fifth;
+  local distance_from_vertex, distance_from_vertex2, distance_from_vertex3, distance_from_vertex4;
+  local nearest_radius;
+
+  foreach edge ee do {
+    xpos := (ee.vertex[1].x + ee.vertex[2].x)/2;
+    ypos := (ee.vertex[1].y + ee.vertex[2].y)/2;
+    zpos := (ee.vertex[1].z + ee.vertex[2].z)/2;
+
+    // distances to the five protein centers
+    distance_first := sqrt((xpos-Bx )^2 + (ypos-By )^2 + (zpos-Bz )^2); // B
+    distance_second  := sqrt((xpos-Ex )^2 + (ypos-Ey )^2 + (zpos-Ez )^2); // E
+
+    // nearest of the five
+    distance_from_vertex  := minimum(distance_first,distance_second);
+
+    // decide which radius to use for scaling
+	if distance_first < distance_second then
+		nearest_radius := RADIUS_SMALL_P2
+	else
+		nearest_radius := RADIUS_SMALL_P5;
+
+    // set lengoal and color (green if within its local small radius)
+    if      distance_from_vertex == distance_first  and distance_first  < RADIUS_SMALL_P2 then {
+      ee.lengoal := length_small;  set ee color green;
+    }
+    else if distance_from_vertex == distance_second and distance_second < RADIUS_SMALL_P5 then {
+      ee.lengoal := length_small;  set ee color green;
+	}
+    else {
+      ee.lengoal := (distance_from_vertex/nearest_radius)^LENGTH_SCALING * length_small;
+      set ee color yellow;
+    };
+
+    // depth coloring / scaling by facet refinement level
+    colorlevel := 0;
+    for (fi := 1; fi <= ee.valence; fi += 1) {
+      colorlevel += ee.facets[fi].Ref_Lev;
+    };
+    colorlevel := colorlevel/ee.valence;
+    ee.lengoal := ee.lengoal / COLORSCALE^(colorlevel);
+    // ee.lengoalset := 1;
+  };
+}
+
+
+
+procedure color_edges_mid() {
+	local distance;
+	local colorlevel;
+	local fi;
+	local xpos; local ypos;
+	foreach edge ee do {
+		xpos := ee.vertex[1].x/2 + ee.vertex[2].x/2;
+		ypos := ee.vertex[1].y/2 + ee.vertex[2].y/2;
+		distance :=  (xpos^2+ypos^2)^0.5;
+		if distance < RADIUS_SMALL_P2 then {
+			ee.color := blue;
+		} 
+	};
+}
+
+procedure color_edges_p() {
+	local distance;
+	local colorlevel;
+	local fi;
+	local xpos; local ypos;
+	foreach edge ee do {
+		xpos := ee.vertex[1].x/2 + ee.vertex[2].x/2;
+		ypos := ee.vertex[1].y/2 + ee.vertex[2].y/2;
+		distance_first :=  ((xpos-Ax)^2+(ypos-Ay)^2)^0.5;
+		distance_second :=  ((xpos-Bx)^2+(ypos-By)^2)^0.5;
+		if distance_first < RADIUS_SMALL_P2 || distance_second < RADIUS_SMALL_P2 then {
+			ee.color := blue;
+		} 
+	};
+}
+
+//refine all edges longer than they should be
+procedure rnew() {
+	printf "rnew() start...\n";
+	unfixall();
+	conon();
+	setlengoals();
+	foreach edges ee where ee.lengoal == 0 do {print ee.id};
+	//pause;
+	refine edge ee where length > RFACTOR * ee.lengoal; 
+	conoff();
+	fixall();
+	printf "rnew() complete...\n";
+}
+
+//does equiangulation
+procedure unew() {
+	printf "unew() start...\n";
+	unfixall();
+	conon();
+	u;
+	conoff();
+	fixall();
+	printf "unew() complete...\n";
+}
+
+//refines, coarsens, etc surface
+procedure rf() {
+printf "rf() start...\n";
+rnew();
+unew();
+coarsen();
+unew();
+printf "rf() complete...\n";}
+
+//sets the level of refinement
+//useful for initial setting up
+procedure setlevel (integer level_set) {
+	level := level_set;
+	length_small := LENGTH_SMALL_L1*2/(2^level);
+}
+
+//converges the shape of the membrane 
+procedure converge(integer hessian_calls, integer refine_every_step) {
+	local energy_old; energy_old := total_energy;
+	local energy_vold; energy_vold := total_energy;
+	local energy_vvold; energy_vvold := total_energy;
+	local energy_diff; energy_diff := 999999999;
+	local repeat_counts; repeat_counts := 0;
+	local trickystuff; 
+	if hessian_calls = 0 then { trickystuff := 1; hessian_calls := 1 } else { trickystuff := 0 };
+	while energy_diff > CONVERGE_TOLERANCE*maximum(maximum(energy_old,energy_vold),energy_vvold) do {
+		if refine_every_step = 1 or (repeat_counts = 0 and !(trickystuff = 1 and hessian_calls > 1)) then { 
+			rnew();unew();coarsen();unew();
+		};
+		{hessian_seek;} hessian_calls;
+		energy_diff := minimum(minimum(abs(total_energy - energy_old),abs(total_energy-energy_vold)),abs(total_energy-energy_vvold));
+		energy_vvold := energy_vold;
+		energy_vold := energy_old;
+		energy_old := total_energy;
+		repeat_counts += 1;
+		if trickystuff = 1 and repeat_counts = 4 then {
+			repeat_counts := 0;
+			hessian_calls += 1;
+		};
+	};
+}
+
+procedure converge_with_G(integer hessian_calls, integer refine_every_step) {
+	local energy_old; energy_old := total_energy;
+	local energy_vold; energy_vold := total_energy;
+	local energy_vvold; energy_vvold := total_energy;
+	local energy_diff; energy_diff := 999999999;
+	local repeat_counts; repeat_counts := 0;
+	local trickystuff; 
+	if hessian_calls = 0 then { trickystuff := 1; hessian_calls := 1 } else { trickystuff := 0 };
+	while energy_diff > CONVERGE_TOLERANCE*maximum(maximum(energy_old,energy_vold),energy_vvold) do {
+		if refine_every_step = 1 or (repeat_counts = 0 and !(trickystuff = 1 and hessian_calls > 1)) then { 
+			rnew();unew();coarsen();unew();
+		};
+		{g;} hessian_calls;
+		energy_diff := minimum(minimum(abs(total_energy - energy_old),abs(total_energy-energy_vold)),abs(total_energy-energy_vvold));
+		energy_vvold := energy_vold;
+		energy_vold := energy_old;
+		energy_old := total_energy;
+		repeat_counts += 1;
+		if trickystuff = 1 and repeat_counts = 4 then {
+			repeat_counts := 0;
+			hessian_calls += 1;
+		};
+	};
+}
+
+procedure fastconverge() {
+	local energy_old; energy_old := total_energy; 
+	local energy_vold; energy_vold := total_energy;	       
+	local energy_vvold; energy_vvold := total_energy;
+	local energy_diff; energy_diff := 999999999;
+	loop_size := 2;
+	counter := 0;
+	while energy_diff > CONVERGE_TOLERANCE*maximum(maximum(energy_old,energy_vold),energy_vvold) do {
+	        rnew();unew();coarsen();unew();
+	        for (loop := 1; loop <= loop_size; loop += 1) {
+		        hessian_seek;
+			if loop = loop_size - 1 then {
+			        energy_2ndtolast := total_energy;
+			};
+		};
+		if loop_size > 1 and (abs(total_energy - energy_2ndtolast) < CONVERGE_TOLERANCE) then {
+		   	loop_size -= 1;
+			counter := 0;
+		} else {
+		        counter += 1;
+		};
+		if counter = 4 then {
+		   	loop_size += 1;
+			counter := 0;
+		};
+		energy_diff := minimum(minimum(abs(total_energy - energy_old),abs(total_energy-energy_vold)),abs(total_energy-energy_vvold));
+		energy_vvold := energy_vold;
+		energy_vold := energy_old;
+		energy_old := total_energy;
+	};
+};
+
+//adjusts the color of faces until there remain no edges with large dihedral angles
+procedure colorconverge(integer hessian_calls) {
+	local sharpangles;
+	sharpangles := 1;
+	local counter;
+	counter := 0;
+	while sharpangles != 0 do {
+		if counter >= 2 AND Average_curvature_P_top <= 0.001 AND Average_curvature_P_rest <= 0.001 then {
+			U;
+			converge_with_G(10,1);
+			U;
+		}
+		else {
+			fastconverge();
+		};
+		dihedral_color(DIHEDRAL_MAX);
+		sharpangles := 0;
+		foreach edge ee where e_in_protein_middle(ee.id) = 0 and  dihedral > DIHEDRAL_MAX * DIHEDRAL_TOLERANCE_FACTOR do sharpangles += 1;
+		printf "There are %d sharp edges left in the simulation\n",sharpangles;
+		counter += 1;
+	};
+	
+};
+
+//runs converge and colorconverge
+procedure convergesimple() {
+	colorconverge(0);
+	fastconverge();
+};
+
+
+procedure color_protein() {
+	
+	foreach facet ff where ff.color == red do {
+		foreach ff.edges ee do ee.color := red;
+	};
+	
+	foreach facet ff where ff.color == blue do {
+		foreach ff.edges ee do ee.color := blue;
+	};
+}
+
+procedure sphere_diagnostic()
+{
+  define vertex attribute dist_dev real;
+  define vertex attribute dist_sq_dev real;
+  define vertex attribute matches_sphere integer;
+  define edge   attribute bad_edge integer;
+
+  local ver_TOLERANCE;           // distance tolerance for “on the sphere”
+  ver_TOLERANCE := 0.001;        // tweak if you like
+
+  /* ── 1.  compute per‑vertex deviation from the big sphere ─────────── */
+  foreach vertex vv do
+  {
+    // distance to shifted centre  (0,0,‑BIG_SPHERE_RADIUS)
+    local distVV;
+    distVV := sqrt( vv.x^2 + vv.y^2 + (vv.z + BIG_SPHERE_RADIUS)^2 );
+
+    vv.dist_dev     := distVV - BIG_SPHERE_RADIUS;
+    vv.dist_sq_dev  := vv.dist_dev^2;
+    vv.matches_sphere := (abs(vv.dist_dev) <= ver_TOLERANCE ? 1 : 0);
+  };
+
+  /* ── 2.  global statistics ────────────────────────────────────────── */
+  dev_sum := 0;
+  sq_dev_sum := 0;
+  max_dev := -1e20;
+  min_dev :=  1e20;
+  matching_vertices := 0;
+
+  foreach vertex vv do
+  {
+    dev_sum  += vv.dist_dev;
+    sq_dev_sum += vv.dist_sq_dev;
+    if vv.dist_dev > max_dev then max_dev := vv.dist_dev;
+    if vv.dist_dev < min_dev then min_dev := vv.dist_dev;
+    if vv.matches_sphere == 1 then matching_vertices += 1;
+  };
+
+  printf "Vertex distance deviation wrt centre (0,0,%g):  min %g, max %g, avg %g, RMS %g\n",
+         -BIG_SPHERE_RADIUS,
+         min_dev, max_dev,
+         dev_sum/vertex_count,
+         sqrt(sq_dev_sum/vertex_count);
+
+  percent_matching := 100.0 * matching_vertices / vertex_count;
+  printf "Vertices within %.4g of sphere: %.2f %% (%d / %d)\n",
+         ver_TOLERANCE, percent_matching,
+         matching_vertices, vertex_count;
+
+  /* ── 3.  colour edges that touch any off‑sphere vertex ─────────────── */
+  bad_edge_count := 0;
+  foreach edge ee do
+  {
+    if (ee.vertex[1].matches_sphere == 0) || (ee.vertex[2].matches_sphere == 0) then
+    {
+      ee.color := black;
+      ee.bad_edge := 1;
+      bad_edge_count += 1;
+    } else {
+      ee.bad_edge := 0;
+    };
+  };
+  printf "Bad edges (touching off‑sphere vertices): %d / %d\n",
+         bad_edge_count, edge_count;
+
+  /* ── 4.  extra info  ──────────────────────────────────────────────── */
+  printf "Protein curvature  (Average_curvature_P_general): %g\n", Average_curvature_P_general;
+  printf "Protein cap radius (Rcap_P1):                    %g\n", Rcap_P1;
+  printf "Membrane curvature (AVG_CURVATURE):              %g\n", AVG_CURVATURE;
+  printf "Big sphere radius (BIG_SPHERE_RADIUS):           %g\n", BIG_SPHERE_RADIUS;
+  printf "Total squared mean curvature (total_energy):     %g\n", total_energy;
+};
+
+
+function real calculate_vertex_A_angle(real Ax, real Ay, real Az, real Bx, real By, real Bz, real Cx, real Cy, real Cz)
+{
+  local ABx;
+  local ABy;
+  local ABz;
+  local ACx;
+  local ACy;
+  local ACz;
+  local dot_product_angle;
+  local magnitude_AB;
+  local magnitude_AC;
+  local cos_angle;
+  local angle_radians;
+  local angle_degrees;
+
+  ABx := Bx - Ax;
+  ABy := By - Ay;
+  ABz := Bz - Az;
+  ACx := Cx - Ax;
+  ACy := Cy - Ay;
+  ACz := Cz - Az;
+
+  dot_product_angle := ABx * ACx + ABy * ACy + ABz * ACz;
+
+  magnitude_AB := sqrt(ABx^2 + ABy^2 + ABz^2);
+  magnitude_AC := sqrt(ACx^2 + ACy^2 + ACz^2);
+
+  cos_angle := dot_product_angle / (magnitude_AB * magnitude_AC);
+
+  angle_radians := acos(cos_angle);
+  angle_degrees := angle_radians * 180 / pi;
+
+  return angle_degrees;
+};
+
+// ===================================================================
+// calculate_spherical_distance (robust; center-aware; no single letters)
+// ===================================================================
+// Geodesic distance along the great circle on a sphere of radius
+// BIG_SPHERE_RADIUS whose center is (0,0,ZC).
+// Inputs: two 3D points on (or very near) that sphere.
+// Uses atan2(||u×v||, u·v) to avoid acos(≈1) collapse.
+// ===================================================================
+function real calculate_spherical_distance(
+    real input_Ax, real input_Ay, real input_Az,
+    real input_Bx, real input_By, real input_Bz)
+{
+    // ---- locals ----------------------------------------------------
+    local sphere_radius;
+    local shifted_Ax; local shifted_Ay; local shifted_Az;
+    local shifted_Bx; local shifted_By; local shifted_Bz;
+    local norm_A_value; local norm_B_value;
+    local unit_Ax; local unit_Ay; local unit_Az;
+    local unit_Bx; local unit_By; local unit_Bz;
+    local dot_unitA_unitB;
+    local cross_x; local cross_y; local cross_z; local cross_norm;
+    local central_angle_value;
+    local distance_value;
+    local tiny_value;
+
+    sphere_radius := BIG_SPHERE_RADIUS;
+    tiny_value := 1e-300;   // protects against 0/0 in extreme degeneracy
+
+    // ---- shift to sphere-centered frame (center at 0,0,ZC) --------
+    shifted_Ax := input_Ax;
+    shifted_Ay := input_Ay;
+    shifted_Az := input_Az - ZC;
+
+    shifted_Bx := input_Bx;
+    shifted_By := input_By;
+    shifted_Bz := input_Bz - ZC;
+
+    // ---- normalize both points to unit vectors ---------------------
+    norm_A_value := sqrt(shifted_Ax^2 + shifted_Ay^2 + shifted_Az^2);
+    norm_B_value := sqrt(shifted_Bx^2 + shifted_By^2 + shifted_Bz^2);
+
+    // guard norms (should be ~sphere_radius, but renormalize anyway)
+    if (norm_A_value < tiny_value) then { norm_A_value := sphere_radius; };
+    if (norm_B_value < tiny_value) then { norm_B_value := sphere_radius; };
+
+    unit_Ax := shifted_Ax / norm_A_value;
+    unit_Ay := shifted_Ay / norm_A_value;
+    unit_Az := shifted_Az / norm_A_value;
+
+    unit_Bx := shifted_Bx / norm_B_value;
+    unit_By := shifted_By / norm_B_value;
+    unit_Bz := shifted_Bz / norm_B_value;
+
+    // ---- dot and cross on the unit sphere --------------------------
+    dot_unitA_unitB := unit_Ax*unit_Bx + unit_Ay*unit_By + unit_Az*unit_Bz;
+
+    // clamp tiny overshoots to [-1,1]
+    if (dot_unitA_unitB > 1) then { dot_unitA_unitB := 1; };
+    if (dot_unitA_unitB < -1) then { dot_unitA_unitB := -1; };
+
+    cross_x := unit_Ay*unit_Bz - unit_Az*unit_By;
+    cross_y := unit_Az*unit_Bx - unit_Ax*unit_Bz;
+    cross_z := unit_Ax*unit_By - unit_Ay*unit_Bx;
+    cross_norm := sqrt(cross_x^2 + cross_y^2 + cross_z^2);
+
+    // ---- central angle via atan2 (stable for tiny angles) ----------
+    central_angle_value := atan2(cross_norm, dot_unitA_unitB);
+
+    // ---- geodesic distance on radius R sphere ----------------------
+    distance_value := sphere_radius * central_angle_value;
+
+    return distance_value;
+}
+
+
+
+
+// Function to calculate the area of a sector of a circle analyticly
+function real sector_area(real radius, real angle_deg) {
+    local angle_rad; local sector_area;
+
+    // Convert angle from degrees to radians
+    angle_rad := angle_deg * pi / 180;
+	
+	sector_area := 0.5 * radius^2 * angle_rad;
+    return sector_area;
+}
+
+// Function to calculate the spherical triangle area using spherical distances
+// ====================================================================
+// calculate_spherical_triangle_area (Girard/atan2; center-aware, robust)
+// ====================================================================
+// Assumes the big sphere has radius BIG_SPHERE_RADIUS and center (0,0,ZC).
+// Uses global Ax..Cz, BIG_SPHERE_RADIUS, and ZC.
+// Steps:
+//   1) Shift vertices by sphere center.
+//   2) Normalize each to the unit sphere (renormalize to kill drift).
+//   3) Use robust Girard formula: E = 2*atan2(|u·(v×w)|, 1 + u·v + v·w + w·u).
+//   4) Area = R^2 * E.
+//
+// No single-letter variables. Evolver-compliant syntax.
+// ====================================================================
+function real calculate_spherical_triangle_area()
+{
+    // ---- locals ----------------------------------------------------
+    local sphere_radius;
+    local center_shift_x;
+    local center_shift_y;
+    local center_shift_z;
+
+    local shifted_Ax;
+    local shifted_Ay;
+    local shifted_Az;
+    local shifted_Bx;
+    local shifted_By;
+    local shifted_Bz;
+    local shifted_Cx;
+    local shifted_Cy;
+    local shifted_Cz;
+
+    local norm_A_value;
+    local norm_B_value;
+    local norm_C_value;
+
+    local unit_Ax;
+    local unit_Ay;
+    local unit_Az;
+    local unit_Bx;
+    local unit_By;
+    local unit_Bz;
+    local unit_Cx;
+    local unit_Cy;
+    local unit_Cz;
+
+    local dot_A_B;
+    local dot_B_C;
+    local dot_C_A;
+
+    local cross_BC_x;
+    local cross_BC_y;
+    local cross_BC_z;
+    local triple_A_BC;
+
+    local denominator_value;
+    local spherical_excess_value;
+    local triangle_area_value;
+
+    local tiny_value;
+
+    // ---- constants / globals --------------------------------------
+    sphere_radius := BIG_SPHERE_RADIUS;
+    center_shift_x := 0;          // sphere center X
+    center_shift_y := 0;          // sphere center Y
+    center_shift_z := ZC;         // sphere center Z  (set ZC globally)
+    tiny_value := 1e-300;         // very small floor (double-precision safe)
+
+    // ---- shift vertices by sphere center ---------------------------
+    shifted_Ax := Ax - center_shift_x;
+    shifted_Ay := Ay - center_shift_y;
+    shifted_Az := Az - center_shift_z;
+
+    shifted_Bx := Bx - center_shift_x;
+    shifted_By := By - center_shift_y;
+    shifted_Bz := Bz - center_shift_z;
+
+    shifted_Cx := Cx - center_shift_x;
+    shifted_Cy := Cy - center_shift_y;
+    shifted_Cz := Cz - center_shift_z;
+
+    // ---- normalize to unit sphere (robust to tiny drift) -----------
+    norm_A_value := sqrt(shifted_Ax^2 + shifted_Ay^2 + shifted_Az^2);
+    norm_B_value := sqrt(shifted_Bx^2 + shifted_By^2 + shifted_Bz^2);
+    norm_C_value := sqrt(shifted_Cx^2 + shifted_Cy^2 + shifted_Cz^2);
+
+    // If norms are extremely small (should not happen), guard them
+    if (norm_A_value < tiny_value) then { norm_A_value := sphere_radius; };
+    if (norm_B_value < tiny_value) then { norm_B_value := sphere_radius; };
+    if (norm_C_value < tiny_value) then { norm_C_value := sphere_radius; };
+
+    unit_Ax := shifted_Ax / norm_A_value;
+    unit_Ay := shifted_Ay / norm_A_value;
+    unit_Az := shifted_Az / norm_A_value;
+
+    unit_Bx := shifted_Bx / norm_B_value;
+    unit_By := shifted_By / norm_B_value;
+    unit_Bz := shifted_Bz / norm_B_value;
+
+    unit_Cx := shifted_Cx / norm_C_value;
+    unit_Cy := shifted_Cy / norm_C_value;
+    unit_Cz := shifted_Cz / norm_C_value;
+
+    // ---- dot products on the unit sphere ---------------------------
+    dot_A_B := unit_Ax*unit_Bx + unit_Ay*unit_By + unit_Az*unit_Bz;
+    dot_B_C := unit_Bx*unit_Cx + unit_By*unit_Cy + unit_Bz*unit_Cz;
+    dot_C_A := unit_Cx*unit_Ax + unit_Cy*unit_Ay + unit_Cz*unit_Az;
+
+    // clamp to [-1,1] to avoid tiny overshoots
+    if (dot_A_B > 1) then { dot_A_B := 1; };
+    if (dot_A_B < -1) then { dot_A_B := -1; };
+    if (dot_B_C > 1) then { dot_B_C := 1; };
+    if (dot_B_C < -1) then { dot_B_C := -1; };
+    if (dot_C_A > 1) then { dot_C_A := 1; };
+    if (dot_C_A < -1) then { dot_C_A := -1; };
+
+    // ---- cross product and triple product --------------------------
+    cross_BC_x := unit_By*unit_Cz - unit_Bz*unit_Cy;
+    cross_BC_y := unit_Bz*unit_Cx - unit_Bx*unit_Cz;
+    cross_BC_z := unit_Bx*unit_Cy - unit_By*unit_Cx;
+
+    triple_A_BC := unit_Ax*cross_BC_x + unit_Ay*cross_BC_y + unit_Az*cross_BC_z;
+
+    // ---- robust Girard formula (atan2) on unit sphere --------------
+    denominator_value := 1 + dot_A_B + dot_B_C + dot_C_A;
+
+    // No aggressive "return 0" here; let atan2 handle tiny values
+    spherical_excess_value := 2 * atan2(abs(triple_A_BC), denominator_value);
+
+    // ---- final area on radius R sphere -----------------------------
+    triangle_area_value := sphere_radius^2 * spherical_excess_value;
+
+    return triangle_area_value;
+}
+
+
+
+procedure Min_Dist_refinment() {
+	distance_AB := calculate_spherical_distance(Ax, Ay, Az, Bx, By, Bz);
+	distance_BC := calculate_spherical_distance(Bx, By, Bz, Cx, Cy, Cz);
+	
+	if ((distance_AB <= MIN_DIST) || (distance_BC <= MIN_DIST)) then {
+		//printf "Min Dist is: %f\n", MIN_DIST;
+		//printf "distance_AB is: %f\n", distance_AB;
+		//printf "distance_BC is: %f\n", distance_BC;
+		LENGTH_SMALL_L1 := 0.5;
+		//printf "LENGTH_SMALL_L1 is: %f\n", LENGTH_SMALL_L1;
+		//pause;
+	};
+	
+}
+
+procedure initialise() {
+	printf "initialise() start...\n";
+	foreach face ff do ff.Ref_Lev := 0;
+	foreach edge ee do ee.lengoalset := 0;
+	//set facet tension 0;
+	//set farea modulus 0;
+	Je.modulus := 1;
+	//apply_average_curvature();
+	conoff();
+	fixall();
+	Min_Dist_refinment();
+
+	setlevel(1);
+	printf "initialise() complete...\n";
+}
+
+
+
+// calculates the area of the protein sector according to facet color at coltact angle ~0
+procedure protein_segment_area() {
+local plain_segment_P1; local plain_segment_P2;
+foreach facet ff where ff.color == red do {plain_segment_P1 := plain_segment_P1 + ff.area}; 
+printf "the plain segement area of protein 1 is: %f\n", plain_segment_P1;  
+foreach facet ff where ff.color == blue do {plain_segment_P2 := plain_segment_P2 + ff.area}; 
+printf "the plain segement area of protein 2 is: %f\n", plain_segment_P2/2;  
+};
+
+
+// Function to calculate the area of the sphere and the number of proteins on its surface
+procedure OUTPUT_FUNCTION() {
+    // Define all variables at the beginning of the function
+    local big_sphere_area;
+    local triangle_area; 
+    local num_triangles;
+	local protein_density;
+    local protein_base_area_A;
+    local protein_base_area_B;
+    local protein_base_area_C;
+	local protein_base_area_D;
+	local protein_base_area_E;
+    local total_protein_base_area;
+    local num_proteins;
+    local angle_A_value;
+    local angle_B_value;
+    local angle_C_value;
+	local angle_D_value;
+	local angle_E_value;
+	local caps_area;
+	local plane_bending_energy;
+	local cap_bending_energy;
+	local protein_caps_area;
+	local cap_area_energy;
+	local total_Bending_energy_calculated;
+	
+	
+	arc_length_P1 := 0;
+	P1_radius := 0;
+	P1_area_segment := 0;
+	arc_length_P2 := 0;
+	P2_radius := 0;
+	P2_area_segment := 0;
+	arc_length_P3 := 0;
+	P3_radius := 0;
+	P3_area_segment := 0;
+	P_segments_area_total := 0;
+	plane_bending_energy := 0;
+	cap_bending_energy := 0;
+	protein_caps_area := 0;
+	cap_area_energy := 0;
+	proteins_base_sectors := 0;
+	total_Bending_energy_calculated := 0;
+	P_in_model := 360 / spin_angle_deg;
+	
+	
+	foreach vertex vv where (con == 11 || con == 13) do {cap_bending_energy:=cap_bending_energy+vv.Je;}; // bending energy of the proteins edges
+	foreach vertex vv where not (con == 10 || con == 11 || con == 12 || con == 13) do {plane_bending_energy:=plane_bending_energy+vv.Je;}; // bending energy of the membrane
+	foreach vertex vv where (con == 10 || con == 12) AND not (con == 11 || con == 13) do {cap_bending_energy:=cap_bending_energy+vv.Je;}; // bending energy of the proteins
+	
+	foreach facets ff where (ff.color == red || ff.color == blue) do {protein_caps_area := protein_caps_area+ff.area;}; // area of protein sphere caps
+	
+	membrane_area := total_area - protein_caps_area;
+
+	total_Bending_energy := Je.value;
+	total_Bending_energy_calculated := plane_bending_energy + cap_bending_energy;
+	
+	// Calculate the angles of the triangle in degrees
+	
+	//angle_A_value := calculate_vertex_A_angle(Ax, Ay, Az, A_Bx, A_By, A_Bz, A_Ex, A_Ey, A_Ez);
+	angle_B_value := calculate_vertex_A_angle(Bx, By, Bz, B_Ax, B_Ay, B_Az, B_Cx, B_Cy, B_Cz);
+	//angle_C_value := calculate_vertex_A_angle(Cx, Cy, Cz, C_Bx, C_By, C_Bz, C_Dx, C_Dy, C_Dz);
+	//angle_D_value := calculate_vertex_A_angle(Dx, Dy, Dz, D_Cx, D_Cy, D_Cz, D_Ex, D_Ey, D_Ez);
+	angle_E_value := calculate_vertex_A_angle(Ex, Ey, Ez, E_Dx, E_Dy, E_Dz, E_Ax, E_Ay, E_Az);
+
+	// Calculate the slice of the protein base for each vertex using the sector_area function
+
+    protein_base_area_B := sector_area(rad_P2, angle_B_value);
+	protein_base_area_E := sector_area(rad_P5, angle_E_value);
+
+
+    // Total protein base area in the triangle
+    total_protein_base_area := protein_base_area_B + protein_base_area_E;
+	
+    // Calculate the area of the big sphere analyticly
+    big_sphere_area := 4 * pi * BIG_SPHERE_RADIUS^2;
+
+	triangle_area := 0;
+
+    // Calculate the number of triangles needed to cover the whole sphere
+  // num_triangles := big_sphere_area / triangle_area;
+	num_triangles := 0;
+	// Calculate the area of the calculated big sphere
+	big_sphere_calc_area := num_triangles * (total_area - protein_caps_area + total_protein_base_area);
+
+    // Calculate the total number of proteins
+    //num_proteins := (total_protein_base_area / (pi * rad_P1^2)) * num_triangles;
+	num_proteins := 0;
+	
+	protein_density := 0;
+	
+	area_per_protein_anltc := 0;
+	
+	area_per_protein_real := 0;
+	
+	num_triangles := 0; // overwrite only for the TXT output file
+
+	num_proteins := 0;
+	
+	height_diff := (P_B_hight - P_E_hight);
+	
+	PHI := total_protein_base_area / (total_area - protein_caps_area + total_protein_base_area);
+
+    // Output the results
+	printf "OUTPUTLINE radius_P2 = %f\n", rad_P2;   // Replace with how you calculate radius if necessary
+	printf "OUTPUTLINE radius_P5 = %f\n", rad_P5;   // Replace with how you calculate radius if necessary
+	
+	printf "OUTPUTLINE Curv_P1_fam = %f\n", Curv_P1_fam;   // curvature of protein 1 family
+	printf "OUTPUTLINE Curv_P2_fam = %f\n", Curv_P2_fam;   // curvature of protein 2 family
+	
+	printf "OUTPUTLINE Curv_P2 = %f\n", Average_curvature_P2;   // curvature of protein 2
+	printf "OUTPUTLINE Curv_P5 = %f\n", Average_curvature_P5;   // curvature of protein 5
+	
+	printf "OUTPUTLINE height_diff = %f\n", height_diff;  // distance between proteins 2 3 and 1
+    printf "OUTPUTLINE distance = %f\n", dist;  // distance between proteins 2 3 and 1
+	
+	printf "OUTPUTLINE tilt_angle_B = %f\n", tilt_B_deg;  // distance between proteins 2 3 and 1
+	printf "OUTPUTLINE tilt_angle_E = %f\n", tilt_E_deg;  // distance between proteins 2 3 and 1
+    printf "OUTPUTLINE membrane_tension = %f\n", MEMBRANE_TENSION;  // membrane tension
+	
+	printf "OUTPUTLINE total_energy = %f\n", total_energy * (10^10);  // total energy of the surface
+    printf "OUTPUTLINE total_Bending_energy = %f\n", total_Bending_energy * (10^10);  // total bending energy
+	printf "OUTPUTLINE total_Bending_energy_calculated = %f\n", total_Bending_energy_calculated * (10^10);  // total bending energy
+	printf "OUTPUTLINE plane_bending_energy = %f\n", plane_bending_energy  * (10^10);  // proteins bending energy
+	printf "OUTPUTLINE cap_bending_energy = %f\n", cap_bending_energy  * (10^10);  // proteins bending energy
+	
+    printf "OUTPUTLINE total_area = %f\n", total_area * (10^10);  // Output total area of the surface
+	printf "OUTPUTLINE protein_caps_area = %f\n", protein_caps_area;  // proteins area
+	printf "OUTPUTLINE membrane_area = %f\n", membrane_area;  // membrane area
+	
+    printf "OUTPUTLINE protein_base_area_B = %f\n", protein_base_area_B;  // Area of protein base at B
+	printf "OUTPUTLINE protein_base_area_E = %f\n", protein_base_area_E;  // Area of protein base at C
+	printf "OUTPUTLINE total_protein_base_area = %f\n", total_protein_base_area;  // proteins area
+
+	printf "OUTPUTLINE analytic_total_area = %f\n", PI*(plane_circle_rad)^2;
+	printf "OUTPUTLINE PHI = %f\n", PHI;  // density of proteins
+}
+
+procedure extreme_case() {
+	printf "extreme_case() start...\n";
+	if (Dist >= 40) then {
+	U;
+	converge_with_G(10,1); 
+	U;
+	};
+	printf "extreme_case() complete...\n";
+}
+
+procedure simmilar_Jcap_case() {
+	printf "simmilar_Jcap_case() start...\n";
+	if (Average_curvature_P1 == Average_curvature_P2 AND Average_curvature_P1 == Average_curvature_P3 AND Average_curvature_P1 == Average_curvature_P4 AND Average_curvature_P1 == Average_curvature_P5) then {
+	U;
+	converge_with_G(5,1); 
+	U;
+	};
+	printf "simmilar_Jcap_case() complete...\n";
+}
+
+procedure converge_Tol_simmilar_Jcap_case() {
+	printf "simmilar_Jcap_case() start...\n";
+	if (Average_curvature_P1 == Average_curvature_P2 AND Average_curvature_P1 == Average_curvature_P3 AND Average_curvature_P1 == Average_curvature_P4 AND Average_curvature_P1 == Average_curvature_P5) then {
+	CONVERGE_TOLERANCE := 1e-10
+	};
+	printf "simmilar_Jcap_case() complete...\n";
+}
+
+// runme fast and furious
+procedure runme() {
+SUPPRESS_WARNING 1825;
+SUPPRESS_WARNING 1792;
+true_DIHEDRAL_MAX := DIHEDRAL_MAX;
+DIHEDRAL_MAX := 0.2;
+true_CONVERGE_TOLERANCE := CONVERGE_TOLERANCE;
+CONVERGE_TOLERANCE := CONVERGE_TOLERANCE*1000;
+initialise();
+setlevel(1);
+{rf()} 8;
+set facet tension 0.1;
+converge(5,1);
+set facet tension MEMBRANE_TENSION;
+converge(5,1);
+setlevel(2);
+{rf()} 3;
+converge(0,1);
+setlevel(3);
+{rf()} 3;
+convergesimple();
+CONVERGE_TOLERANCE := true_CONVERGE_TOLERANCE;
+convergesimple();
+DIHEDRAL_MAX := true_DIHEDRAL_MAX;
+convergesimple();
+color_protein();
+OUTPUT_FUNCTION();
+};
+
+// Function to calculate the graphic string
+procedure set_graphics(real spin_angle_deg) {
+
+	local times;
+    // Calculate times
+    times := 360 / spin_angle_deg;
+    if times == 4 then final_string := "((!b)|2(!b)|3(!b)|4(!b))";
+    if times == 6 then final_string := "((!b)|2(!b)|3(!b)|4(!b)|5(!b)|6(!b))";
+	if times == 8 then final_string := "((!b)|2(!b)|3(!b)|4(!b)|5(!b)|6(!b)|7(!b)|8(!b))";
+	if times == 10 then final_string := "((!b)|2(!b)|3(!b)|4(!b)|5(!b)|6(!b)|7(!b)|8(!b)|9(!b)|10(!b))";
+	if times == 12 then final_string := "((!b)|2(!b)|3(!b)|4(!b)|5(!b)|6(!b)|7(!b)|8(!b)|9(!b)|10(!b)|11(!b)|12(!b))";
+    // Add more cases as needed up to a reasonable maximum
+	
+    // Display the resulting string
+    printf "Constructed string: %s\n", final_string;
+	GRAPHIC_STRING := final_string;
+}
+
+//if times == 3 then final_string := "((!b)|(!a!c)|(!a!b!c)|2(!b)|3(!b))";
+//one_shape := "((!b)|2(!b)|3(!b)|4(!b)|5(!b)|6(!b))" /* to present 1 transformation of the whole shape */
+//set_graphics(!b);
+transform_expr "(!a!b)|2(!a!b)" /* to present transformations */
+
+
+/*
+			Y
+			|						A
+			|					   / \	
+			|					  /	  \						
+-X----------O-----------X		 /     \
+			|					/       \
+			|			  	   C---------B
+			|								   
+		   -Y
+*/
+
+

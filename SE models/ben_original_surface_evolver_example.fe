@@ -1,0 +1,1303 @@
+procedure res() {
+	load datafilename;
+};
+
+PARAMETER STARTING_TILT := PI/4    // radians; tilt about +y from +x toward +z
+
+//SET PARAMETERS
+
+//to do with the geometry
+
+PARAMETER	R_PRO			= 1		// radius of protein in membrane
+PARAMETER	R_RIM			= 1000		// radius for rim of membrane
+PARAMETER	Z_RIM			= 0.0		// initial guess for height of rim
+PARAMETER	ALPHA			= asin(0.375)		// angle of interception with membrane corresponds to 0.15 curvature
+
+CONSTRAINT_TOLERANCE: 1e-7
+
+PARAMETER	PRO1_X			=  2		// initial position of protein
+PARAMETER	PRO1_Y			=  0
+PARAMETER	PRO1_Z			=  0
+
+PARAMETER	OR1_X			=  0		// initial orientation of protein - do not change!
+PARAMETER	OR1_Y			=  0
+PARAMETER	OR1_Z			=  1
+
+PARAMETER 	BOX_ANGLE		= PI		// what is the angle of the simulation box
+							// (i.e. for a multibody calculate with 3 proteins it would be 2*PI/3;
+
+PARAMETER	STARTING_DISTANCE	= 20.0	// distance of protein at initial force measurment
+PARAMETER 	MOVE_SHIFT		= 0.1		// distance that the protein is shifted after each scan
+
+PARAMETER	NUM_PROS		= 1		// number of proteins
+
+//membrane tension
+
+PARAMETER  	MEMBRANE_TENSION	= 0.0		// tension of the membrane
+
+//to do with the calculation of energy gradients
+
+PARAMETER  	TILT_STEP		= 1e-11		// size of tilt step used to determine the gradient
+PARAMETER  	DIST_STEP		= 1e-11 	// size of distance step used to determine the gradient
+
+//variables to pass to command files if needed
+
+PARAMETER      GENERIC1	       	        = 0
+PARAMETER      GENERIC2			= 0
+PARAMETER      GENERIC3			= 0
+PARAMETER      GENERIC4			= 0
+
+//to do with moving of proteins (if used at all)
+
+PARAMETER 	TRANSLATE_FRICTION	= 5		// (size of force)/(size of step)
+PARAMETER 	TILT_FRICTION		= 20
+
+PARAMETER 	TRANSLATE_MAX		= 1		// maximum size of the step
+PARAMETER 	TILT_MAX		= 1
+
+//used by functions
+
+PARAMETER FIRST_PROTEIN_CONSTRAINT	= 5
+
+//numerical
+
+PARAMETER  	CONVERGE_TOLERANCE 	= 1e-08	// tolerance for energy discrepancies as a fraction of the total energy
+
+//to do with the coarsening of the triangulation
+
+//coarsening of the triangulation is controlled by setting maximum and minimum allowable edge lengths
+//these maximum and minimum depend on distance from the centre of the simulation box and on the color of the faces
+//basing it on distance makes the initial setting up a bit smoother
+//basing it on color allows us to tune the refinement based on the curvature
+
+PARAMETER	RADIUS_SMALL		= 4*R_PRO	// distance from protein beyond which triangulation starts to coarsen
+//within distance RADIUS_SMALL the minimum edge length is given by the variable length_small
+//length_small depends on the level by length_small = LENGTH_SMALL_L1 * 2 / 2^(level) 
+PARAMETER 	LENGTH_SMALL_L1		= 1;
+//the maximum edge length is simply the minimum edge length multplied by the factor RFACTOR
+PARAMETER  	RFACTOR		 	= 3
+//the minimum dihedral_angle is a factor of RFACTOR smaller than DIHEDRAL_MAX
+PARAMETER	DFACTOR			= 3
+//beyond a distance of RADIUS_SMALL from the protein the minimum edge length depends on this distance and is calculate by
+//minimum edge length = length_small * (distance/RADIUS_SMALL)^LENGTH_SCALING
+PARAMETER  	LENGTH_SCALING		= 1.0
+
+PARAMETER  	DIHEDRAL_MAX		= 0.02	//maximum dihedral angle	
+PARAMETER  	DIHEDRAL_TOLERANCE_FACTOR	= 2	//dihedral angle can actually be this times as large as dihedral_max
+PARAMETER 	COLORSCALE		= 1.5		//length of edges changes by this factor in one color step
+PARAMETER	COLOR_DOWN_CHANCE	= 0.2		//probability that a face that has too high a color gets stepped down
+
+PARAMETER SPHERE_RADIUS 		= R_PRO/SIN(ALPHA)		//radius of sphere that describes protein
+PARAMETER  DIST_TO_CENTRE 		= SPHERE_RADIUS * COS(ALPHA)	//distance from centre of protein to centre of sphere
+
+PARAMETER LENGTH_SMALL 			= LENGTH_SMALL_L1		//initialise length_small
+
+PARAMETER TILT_SAFETY_FACTOR		= 10	//how max tilt depends on proximity of another constraint
+PARAMETER TRANSLATE_SAFETY_FACTOR	= 10	//how max translation depends on proximity of another constraint
+
+
+PARAMETER MAX_NUM_PROS			= 25	//routines work for up to this many proteins
+
+quantity sqmean energy modulus 0 method star_perp_sq_mean_curvature global
+
+define vertex attribute con integer
+define edge attribute lengoal real
+
+//DEFINE THE FUNCTION
+
+procedure endjob() {
+	load "die";   //this file does not exist so program exits (I know it's messy!)	
+}
+
+// checks if a given protein id is sensible
+procedure checkproid(integer pro_id) {
+	if pro_id > NUM_PROS or pro_id < 1 then {
+		printf "pro_id = %d is larger than NUM_PROS = %d or less than 1\n",pro_id, NUM_PROS;
+		endjob();
+	};
+	if NUM_PROS > MAX_NUM_PROS then {
+		printf "NUM_PROS = %d is larger than MAX_NUM_PROS = %d\n",NUM_PROS, MAX_NUM_PROS;
+		endjob();
+	};
+}	
+
+// sets the position of a protein based on the given id
+procedure setpos(integer pro_id, real posx, real posy, real posz) {
+	checkproid(pro_id);
+	if pro_id = 1 then { PRO1_X := posx; PRO1_Y := posy; PRO1_Z := posz; };
+	if pro_id = 2 then { PRO2_X := posx; PRO2_Y := posy; PRO2_Z := posz; };
+	if pro_id = 3 then { PRO3_X := posx; PRO3_Y := posy; PRO3_Z := posz; };
+	if pro_id = 4 then { PRO4_X := posx; PRO4_Y := posy; PRO4_Z := posz; };
+	if pro_id = 5 then { PRO5_X := posx; PRO5_Y := posy; PRO5_Z := posz; };
+	if pro_id = 6 then { PRO6_X := posx; PRO6_Y := posy; PRO6_Z := posz; };
+	if pro_id = 7 then { PRO7_X := posx; PRO7_Y := posy; PRO7_Z := posz; };
+	if pro_id = 8 then { PRO8_X := posx; PRO8_Y := posy; PRO8_Z := posz; };
+	if pro_id = 9 then { PRO9_X := posx; PRO9_Y := posy; PRO9_Z := posz; };
+	if pro_id = 10 then { PRO10_X := posx; PRO10_Y := posy; PRO10_Z := posz; };
+	if pro_id = 11 then { PRO11_X := posx; PRO11_Y := posy; PRO11_Z := posz; };
+	if pro_id = 12 then { PRO12_X := posx; PRO12_Y := posy; PRO12_Z := posz; };
+	if pro_id = 13 then { PRO13_X := posx; PRO13_Y := posy; PRO13_Z := posz; };
+	if pro_id = 14 then { PRO14_X := posx; PRO14_Y := posy; PRO14_Z := posz; };
+	if pro_id = 15 then { PRO15_X := posx; PRO15_Y := posy; PRO15_Z := posz; };
+	if pro_id = 16 then { PRO16_X := posx; PRO16_Y := posy; PRO16_Z := posz; };
+	if pro_id = 17 then { PRO17_X := posx; PRO17_Y := posy; PRO17_Z := posz; };
+	if pro_id = 18 then { PRO18_X := posx; PRO18_Y := posy; PRO18_Z := posz; };
+	if pro_id = 19 then { PRO19_X := posx; PRO19_Y := posy; PRO19_Z := posz; };
+	if pro_id = 20 then { PRO20_X := posx; PRO20_Y := posy; PRO20_Z := posz; };
+	if pro_id = 21 then { PRO21_X := posx; PRO21_Y := posy; PRO21_Z := posz; };
+	if pro_id = 22 then { PRO22_X := posx; PRO22_Y := posy; PRO22_Z := posz; };
+	if pro_id = 23 then { PRO23_X := posx; PRO23_Y := posy; PRO23_Z := posz; };
+	if pro_id = 24 then { PRO24_X := posx; PRO24_Y := posy; PRO24_Z := posz; };
+	if pro_id = 25 then { PRO25_X := posx; PRO25_Y := posy; PRO25_Z := posz; };
+}
+
+//reads a coordinate of a protein position
+function real readpos(integer pro_id, integer dimension) {
+	checkproid(pro_id);
+	if dimension > 3 or dimension < 1 then {
+		printf "dimension = %d must be 1, 2 or 3\n",dimension;
+		endjob();
+	};
+	if pro_id=1 then { if dimension=1 then { return PRO1_X; }; if dimension=2 then { return PRO1_Y; }; if dimension=3 then { return PRO1_Z; };};
+	if pro_id=2 then { if dimension=1 then { return PRO2_X; }; if dimension=2 then { return PRO2_Y; }; if dimension=3 then { return PRO2_Z; };};
+	if pro_id=3 then { if dimension=1 then { return PRO3_X; }; if dimension=2 then { return PRO3_Y; }; if dimension=3 then { return PRO3_Z; };};
+	if pro_id=4 then { if dimension=1 then { return PRO4_X; }; if dimension=2 then { return PRO4_Y; }; if dimension=3 then { return PRO4_Z; };};
+	if pro_id=5 then { if dimension=1 then { return PRO5_X; }; if dimension=2 then { return PRO5_Y; }; if dimension=3 then { return PRO5_Z; };};
+	if pro_id=6 then { if dimension=1 then { return PRO6_X; }; if dimension=2 then { return PRO6_Y; }; if dimension=3 then { return PRO6_Z; };};
+	if pro_id=7 then { if dimension=1 then { return PRO7_X; }; if dimension=2 then { return PRO7_Y; }; if dimension=3 then { return PRO7_Z; };};
+	if pro_id=8 then { if dimension=1 then { return PRO8_X; }; if dimension=2 then { return PRO8_Y; }; if dimension=3 then { return PRO8_Z; };};
+	if pro_id=9 then { if dimension=1 then { return PRO9_X; }; if dimension=2 then { return PRO9_Y; }; if dimension=3 then { return PRO9_Z; };};
+	if pro_id=10 then { if dimension=1 then { return PRO10_X; }; if dimension=2 then { return PRO10_Y; }; if dimension=3 then { return PRO10_Z; };};
+	if pro_id=11 then { if dimension=1 then { return PRO11_X; }; if dimension=2 then { return PRO11_Y; }; if dimension=3 then { return PRO11_Z; };};
+	if pro_id=12 then { if dimension=1 then { return PRO12_X; }; if dimension=2 then { return PRO12_Y; }; if dimension=3 then { return PRO12_Z; };};
+	if pro_id=13 then { if dimension=1 then { return PRO13_X; }; if dimension=2 then { return PRO13_Y; }; if dimension=3 then { return PRO13_Z; };};
+	if pro_id=14 then { if dimension=1 then { return PRO14_X; }; if dimension=2 then { return PRO14_Y; }; if dimension=3 then { return PRO14_Z; };};
+	if pro_id=15 then { if dimension=1 then { return PRO15_X; }; if dimension=2 then { return PRO15_Y; }; if dimension=3 then { return PRO15_Z; };};
+	if pro_id=16 then { if dimension=1 then { return PRO16_X; }; if dimension=2 then { return PRO16_Y; }; if dimension=3 then { return PRO16_Z; };};
+	if pro_id=17 then { if dimension=1 then { return PRO17_X; }; if dimension=2 then { return PRO17_Y; }; if dimension=3 then { return PRO17_Z; };};
+	if pro_id=18 then { if dimension=1 then { return PRO18_X; }; if dimension=2 then { return PRO18_Y; }; if dimension=3 then { return PRO18_Z; };};
+	if pro_id=19 then { if dimension=1 then { return PRO19_X; }; if dimension=2 then { return PRO19_Y; }; if dimension=3 then { return PRO19_Z; };};
+	if pro_id=20 then { if dimension=1 then { return PRO20_X; }; if dimension=2 then { return PRO20_Y; }; if dimension=3 then { return PRO20_Z; };};
+	if pro_id=21 then { if dimension=1 then { return PRO21_X; }; if dimension=2 then { return PRO21_Y; }; if dimension=3 then { return PRO21_Z; };};
+	if pro_id=22 then { if dimension=1 then { return PRO22_X; }; if dimension=2 then { return PRO22_Y; }; if dimension=3 then { return PRO22_Z; };};
+	if pro_id=23 then { if dimension=1 then { return PRO23_X; }; if dimension=2 then { return PRO23_Y; }; if dimension=3 then { return PRO23_Z; };};
+	if pro_id=24 then { if dimension=1 then { return PRO24_X; }; if dimension=2 then { return PRO24_Y; }; if dimension=3 then { return PRO24_Z; };};
+	if pro_id=25 then { if dimension=1 then { return PRO25_X; }; if dimension=2 then { return PRO25_Y; }; if dimension=3 then { return PRO25_Z; };};
+}
+
+//sets the orientation of a protein
+procedure setor(integer pro_id, real posx, real posy, real posz) {
+	checkproid(pro_id);
+	if pro_id = 1 then { OR1_X := posx; OR1_Y := posy; OR1_Z := posz; };
+	if pro_id = 2 then { OR2_X := posx; OR2_Y := posy; OR2_Z := posz; };
+	if pro_id = 3 then { OR3_X := posx; OR3_Y := posy; OR3_Z := posz; };
+	if pro_id = 4 then { OR4_X := posx; OR4_Y := posy; OR4_Z := posz; };
+	if pro_id = 5 then { OR5_X := posx; OR5_Y := posy; OR5_Z := posz; };
+	if pro_id = 6 then { OR6_X := posx; OR6_Y := posy; OR6_Z := posz; };
+	if pro_id = 7 then { OR7_X := posx; OR7_Y := posy; OR7_Z := posz; };
+	if pro_id = 8 then { OR8_X := posx; OR8_Y := posy; OR8_Z := posz; };
+	if pro_id = 9 then { OR9_X := posx; OR9_Y := posy; OR9_Z := posz; };
+	if pro_id = 10 then { OR10_X := posx; OR10_Y := posy; OR10_Z := posz; };
+	if pro_id = 11 then { OR11_X := posx; OR11_Y := posy; OR11_Z := posz; };
+	if pro_id = 12 then { OR12_X := posx; OR12_Y := posy; OR12_Z := posz; };
+	if pro_id = 13 then { OR13_X := posx; OR13_Y := posy; OR13_Z := posz; };
+	if pro_id = 14 then { OR14_X := posx; OR14_Y := posy; OR14_Z := posz; };
+	if pro_id = 15 then { OR15_X := posx; OR15_Y := posy; OR15_Z := posz; };
+	if pro_id = 16 then { OR16_X := posx; OR16_Y := posy; OR16_Z := posz; };
+	if pro_id = 17 then { OR17_X := posx; OR17_Y := posy; OR17_Z := posz; };
+	if pro_id = 18 then { OR18_X := posx; OR18_Y := posy; OR18_Z := posz; };
+	if pro_id = 19 then { OR19_X := posx; OR19_Y := posy; OR19_Z := posz; };
+	if pro_id = 20 then { OR20_X := posx; OR20_Y := posy; OR20_Z := posz; };
+	if pro_id = 21 then { OR21_X := posx; OR21_Y := posy; OR21_Z := posz; };
+	if pro_id = 22 then { OR22_X := posx; OR22_Y := posy; OR22_Z := posz; };
+	if pro_id = 23 then { OR23_X := posx; OR23_Y := posy; OR23_Z := posz; };
+	if pro_id = 24 then { OR24_X := posx; OR24_Y := posy; OR24_Z := posz; };
+	if pro_id = 25 then { OR25_X := posx; OR25_Y := posy; OR25_Z := posz; };
+}
+
+//read a coordinate of the orientation of a protein		 
+function real reador(integer pro_id, integer dimension) {
+	checkproid(pro_id);
+	if dimension > 3 or dimension < 1 then {
+		printf "dimension = %d must be 1, 2 or 3\n",dimension;
+		endjob();
+	};
+	if pro_id=1 then { if dimension=1 then { return OR1_X; }; if dimension=2 then { return OR1_Y; }; if dimension=3 then { return OR1_Z; };};
+	if pro_id=2 then { if dimension=1 then { return OR2_X; }; if dimension=2 then { return OR2_Y; }; if dimension=3 then { return OR2_Z; };};
+	if pro_id=3 then { if dimension=1 then { return OR3_X; }; if dimension=2 then { return OR3_Y; }; if dimension=3 then { return OR3_Z; };};
+	if pro_id=4 then { if dimension=1 then { return OR4_X; }; if dimension=2 then { return OR4_Y; }; if dimension=3 then { return OR4_Z; };};
+	if pro_id=5 then { if dimension=1 then { return OR5_X; }; if dimension=2 then { return OR5_Y; }; if dimension=3 then { return OR5_Z; };};
+	if pro_id=6 then { if dimension=1 then { return OR6_X; }; if dimension=2 then { return OR6_Y; }; if dimension=3 then { return OR6_Z; };};
+	if pro_id=7 then { if dimension=1 then { return OR7_X; }; if dimension=2 then { return OR7_Y; }; if dimension=3 then { return OR7_Z; };};
+	if pro_id=8 then { if dimension=1 then { return OR8_X; }; if dimension=2 then { return OR8_Y; }; if dimension=3 then { return OR8_Z; };};
+	if pro_id=9 then { if dimension=1 then { return OR9_X; }; if dimension=2 then { return OR9_Y; }; if dimension=3 then { return OR9_Z; };};
+	if pro_id=10 then { if dimension=1 then { return OR10_X; }; if dimension=2 then { return OR10_Y; }; if dimension=3 then { return OR10_Z; };};
+	if pro_id=11 then { if dimension=1 then { return OR11_X; }; if dimension=2 then { return OR11_Y; }; if dimension=3 then { return OR11_Z; };};
+	if pro_id=12 then { if dimension=1 then { return OR12_X; }; if dimension=2 then { return OR12_Y; }; if dimension=3 then { return OR12_Z; };};
+	if pro_id=13 then { if dimension=1 then { return OR13_X; }; if dimension=2 then { return OR13_Y; }; if dimension=3 then { return OR13_Z; };};
+	if pro_id=14 then { if dimension=1 then { return OR14_X; }; if dimension=2 then { return OR14_Y; }; if dimension=3 then { return OR14_Z; };};
+	if pro_id=15 then { if dimension=1 then { return OR15_X; }; if dimension=2 then { return OR15_Y; }; if dimension=3 then { return OR15_Z; };};
+	if pro_id=16 then { if dimension=1 then { return OR16_X; }; if dimension=2 then { return OR16_Y; }; if dimension=3 then { return OR16_Z; };};
+	if pro_id=17 then { if dimension=1 then { return OR17_X; }; if dimension=2 then { return OR17_Y; }; if dimension=3 then { return OR17_Z; };};
+	if pro_id=18 then { if dimension=1 then { return OR18_X; }; if dimension=2 then { return OR18_Y; }; if dimension=3 then { return OR18_Z; };};
+	if pro_id=19 then { if dimension=1 then { return OR19_X; }; if dimension=2 then { return OR19_Y; }; if dimension=3 then { return OR19_Z; };};
+	if pro_id=20 then { if dimension=1 then { return OR20_X; }; if dimension=2 then { return OR20_Y; }; if dimension=3 then { return OR20_Z; };};
+	if pro_id=21 then { if dimension=1 then { return OR21_X; }; if dimension=2 then { return OR21_Y; }; if dimension=3 then { return OR21_Z; };};
+	if pro_id=22 then { if dimension=1 then { return OR22_X; }; if dimension=2 then { return OR22_Y; }; if dimension=3 then { return OR22_Z; };};
+	if pro_id=23 then { if dimension=1 then { return OR23_X; }; if dimension=2 then { return OR23_Y; }; if dimension=3 then { return OR23_Z; };};
+	if pro_id=24 then { if dimension=1 then { return OR24_X; }; if dimension=2 then { return OR24_Y; }; if dimension=3 then { return OR24_Z; };};
+	if pro_id=25 then { if dimension=1 then { return OR25_X; }; if dimension=2 then { return OR25_Y; }; if dimension=3 then { return OR25_Z; };};
+}
+
+//set the force acting on a protein
+procedure setforce(integer pro_id, real forcex, real forcey, real forcez) {
+	checkproid(pro_id);
+	if pro_id = 1 then { FORCE1_X := forcex; FORCE1_Y := forcey; FORCE1_Z := forcez; };
+	if pro_id = 2 then { FORCE2_X := forcex; FORCE2_Y := forcey; FORCE2_Z := forcez; };
+	if pro_id = 3 then { FORCE3_X := forcex; FORCE3_Y := forcey; FORCE3_Z := forcez; };
+	if pro_id = 4 then { FORCE4_X := forcex; FORCE4_Y := forcey; FORCE4_Z := forcez; };
+	if pro_id = 5 then { FORCE5_X := forcex; FORCE5_Y := forcey; FORCE5_Z := forcez; };
+	if pro_id = 6 then { FORCE6_X := forcex; FORCE6_Y := forcey; FORCE6_Z := forcez; };
+	if pro_id = 7 then { FORCE7_X := forcex; FORCE7_Y := forcey; FORCE7_Z := forcez; };
+	if pro_id = 8 then { FORCE8_X := forcex; FORCE8_Y := forcey; FORCE8_Z := forcez; };
+	if pro_id = 9 then { FORCE9_X := forcex; FORCE9_Y := forcey; FORCE9_Z := forcez; };
+	if pro_id = 10 then { FORCE10_X := forcex; FORCE10_Y := forcey; FORCE10_Z := forcez; };
+	if pro_id = 11 then { FORCE11_X := forcex; FORCE11_Y := forcey; FORCE11_Z := forcez; };
+	if pro_id = 12 then { FORCE12_X := forcex; FORCE12_Y := forcey; FORCE12_Z := forcez; };
+	if pro_id = 13 then { FORCE13_X := forcex; FORCE13_Y := forcey; FORCE13_Z := forcez; };
+	if pro_id = 14 then { FORCE14_X := forcex; FORCE14_Y := forcey; FORCE14_Z := forcez; };
+	if pro_id = 15 then { FORCE15_X := forcex; FORCE15_Y := forcey; FORCE15_Z := forcez; };
+	if pro_id = 16 then { FORCE16_X := forcex; FORCE16_Y := forcey; FORCE16_Z := forcez; };
+	if pro_id = 17 then { FORCE17_X := forcex; FORCE17_Y := forcey; FORCE17_Z := forcez; };
+	if pro_id = 18 then { FORCE18_X := forcex; FORCE18_Y := forcey; FORCE18_Z := forcez; };
+	if pro_id = 19 then { FORCE19_X := forcex; FORCE19_Y := forcey; FORCE19_Z := forcez; };
+	if pro_id = 20 then { FORCE20_X := forcex; FORCE20_Y := forcey; FORCE20_Z := forcez; };
+	if pro_id = 21 then { FORCE21_X := forcex; FORCE21_Y := forcey; FORCE21_Z := forcez; };
+	if pro_id = 22 then { FORCE22_X := forcex; FORCE22_Y := forcey; FORCE22_Z := forcez; };
+	if pro_id = 23 then { FORCE23_X := forcex; FORCE23_Y := forcey; FORCE23_Z := forcez; };
+	if pro_id = 24 then { FORCE24_X := forcex; FORCE24_Y := forcey; FORCE24_Z := forcez; };
+	if pro_id = 25 then { FORCE25_X := forcex; FORCE25_Y := forcey; FORCE25_Z := forcez; };
+}
+
+//read the force acting on a protein		 
+function real readforce(integer pro_id, integer dimension) {
+	checkproid(pro_id);
+	if dimension > 3 or dimension < 1 then {
+		printf "dimension = %d must be 1, 2 or 3\n",dimension;
+		endjob();
+	};
+	if pro_id=1 then { if dimension=1 then {return FORCE1_X;}; if dimension=2 then {return FORCE1_Y;}; if dimension=3 then {return FORCE1_Z;};};
+	if pro_id=2 then { if dimension=1 then {return FORCE2_X;}; if dimension=2 then {return FORCE2_Y;}; if dimension=3 then {return FORCE2_Z;};};
+	if pro_id=3 then { if dimension=1 then {return FORCE3_X;}; if dimension=2 then {return FORCE3_Y;}; if dimension=3 then {return FORCE3_Z;};};
+	if pro_id=4 then { if dimension=1 then {return FORCE4_X;}; if dimension=2 then {return FORCE4_Y;}; if dimension=3 then {return FORCE4_Z;};};
+	if pro_id=5 then { if dimension=1 then {return FORCE5_X;}; if dimension=2 then {return FORCE5_Y;}; if dimension=3 then {return FORCE5_Z;};};
+	if pro_id=6 then { if dimension=1 then {return FORCE6_X;}; if dimension=2 then {return FORCE6_Y;}; if dimension=3 then {return FORCE6_Z;};};
+	if pro_id=7 then { if dimension=1 then {return FORCE7_X;}; if dimension=2 then {return FORCE7_Y;}; if dimension=3 then {return FORCE7_Z;};};
+	if pro_id=8 then { if dimension=1 then {return FORCE8_X;}; if dimension=2 then {return FORCE8_Y;}; if dimension=3 then {return FORCE8_Z;};};
+	if pro_id=9 then { if dimension=1 then {return FORCE9_X;}; if dimension=2 then {return FORCE9_Y;}; if dimension=3 then {return FORCE9_Z;};};
+	if pro_id=10 then { if dimension=1 then {return FORCE10_X;}; if dimension=2 then {return FORCE10_Y;}; if dimension=3 then {return FORCE10_Z;};};
+	if pro_id=11 then { if dimension=1 then {return FORCE11_X;}; if dimension=2 then {return FORCE11_Y;}; if dimension=3 then {return FORCE11_Z;};};
+	if pro_id=12 then { if dimension=1 then {return FORCE12_X;}; if dimension=2 then {return FORCE12_Y;}; if dimension=3 then {return FORCE12_Z;};};
+	if pro_id=13 then { if dimension=1 then {return FORCE13_X;}; if dimension=2 then {return FORCE13_Y;}; if dimension=3 then {return FORCE13_Z;};};
+	if pro_id=14 then { if dimension=1 then {return FORCE14_X;}; if dimension=2 then {return FORCE14_Y;}; if dimension=3 then {return FORCE14_Z;};};
+	if pro_id=15 then { if dimension=1 then {return FORCE15_X;}; if dimension=2 then {return FORCE15_Y;}; if dimension=3 then {return FORCE15_Z;};};
+	if pro_id=16 then { if dimension=1 then {return FORCE16_X;}; if dimension=2 then {return FORCE16_Y;}; if dimension=3 then {return FORCE16_Z;};};
+	if pro_id=17 then { if dimension=1 then {return FORCE17_X;}; if dimension=2 then {return FORCE17_Y;}; if dimension=3 then {return FORCE17_Z;};};
+	if pro_id=18 then { if dimension=1 then {return FORCE18_X;}; if dimension=2 then {return FORCE18_Y;}; if dimension=3 then {return FORCE18_Z;};};
+	if pro_id=19 then { if dimension=1 then {return FORCE19_X;}; if dimension=2 then {return FORCE19_Y;}; if dimension=3 then {return FORCE19_Z;};};
+	if pro_id=20 then { if dimension=1 then {return FORCE20_X;}; if dimension=2 then {return FORCE20_Y;}; if dimension=3 then {return FORCE20_Z;};};
+	if pro_id=21 then { if dimension=1 then {return FORCE21_X;}; if dimension=2 then {return FORCE21_Y;}; if dimension=3 then {return FORCE21_Z;};};
+	if pro_id=22 then { if dimension=1 then {return FORCE22_X;}; if dimension=2 then {return FORCE22_Y;}; if dimension=3 then {return FORCE22_Z;};};
+	if pro_id=23 then { if dimension=1 then {return FORCE23_X;}; if dimension=2 then {return FORCE23_Y;}; if dimension=3 then {return FORCE23_Z;};};
+	if pro_id=24 then { if dimension=1 then {return FORCE24_X;}; if dimension=2 then {return FORCE24_Y;}; if dimension=3 then {return FORCE24_Z;};};
+	if pro_id=25 then { if dimension=1 then {return FORCE25_X;}; if dimension=2 then {return FORCE25_Y;}; if dimension=3 then {return FORCE25_Z;};};
+}
+
+//set the torque acting on a protein
+procedure settorque(integer pro_id, real torquex, real torquey, real torquez) {
+	checkproid(pro_id);
+	if pro_id = 1 then { TORQUE1_X := torquex; TORQUE1_Y := torquey; TORQUE1_Z := torquez; };
+	if pro_id = 2 then { TORQUE2_X := torquex; TORQUE2_Y := torquey; TORQUE2_Z := torquez; };
+	if pro_id = 3 then { TORQUE3_X := torquex; TORQUE3_Y := torquey; TORQUE3_Z := torquez; };
+	if pro_id = 4 then { TORQUE4_X := torquex; TORQUE4_Y := torquey; TORQUE4_Z := torquez; };
+	if pro_id = 5 then { TORQUE5_X := torquex; TORQUE5_Y := torquey; TORQUE5_Z := torquez; };
+	if pro_id = 6 then { TORQUE6_X := torquex; TORQUE6_Y := torquey; TORQUE6_Z := torquez; };
+	if pro_id = 7 then { TORQUE7_X := torquex; TORQUE7_Y := torquey; TORQUE7_Z := torquez; };
+	if pro_id = 8 then { TORQUE8_X := torquex; TORQUE8_Y := torquey; TORQUE8_Z := torquez; };
+	if pro_id = 9 then { TORQUE9_X := torquex; TORQUE9_Y := torquey; TORQUE9_Z := torquez; };
+	if pro_id = 10 then { TORQUE10_X := torquex; TORQUE10_Y := torquey; TORQUE10_Z := torquez; };
+	if pro_id = 11 then { TORQUE11_X := torquex; TORQUE11_Y := torquey; TORQUE11_Z := torquez; };
+	if pro_id = 12 then { TORQUE12_X := torquex; TORQUE12_Y := torquey; TORQUE12_Z := torquez; };
+	if pro_id = 13 then { TORQUE13_X := torquex; TORQUE13_Y := torquey; TORQUE13_Z := torquez; };
+	if pro_id = 14 then { TORQUE14_X := torquex; TORQUE14_Y := torquey; TORQUE14_Z := torquez; };
+	if pro_id = 15 then { TORQUE15_X := torquex; TORQUE15_Y := torquey; TORQUE15_Z := torquez; };
+	if pro_id = 16 then { TORQUE16_X := torquex; TORQUE16_Y := torquey; TORQUE16_Z := torquez; };
+	if pro_id = 17 then { TORQUE17_X := torquex; TORQUE17_Y := torquey; TORQUE17_Z := torquez; };
+	if pro_id = 18 then { TORQUE18_X := torquex; TORQUE18_Y := torquey; TORQUE18_Z := torquez; };
+	if pro_id = 19 then { TORQUE19_X := torquex; TORQUE19_Y := torquey; TORQUE19_Z := torquez; };
+	if pro_id = 20 then { TORQUE20_X := torquex; TORQUE20_Y := torquey; TORQUE20_Z := torquez; };
+	if pro_id = 21 then { TORQUE21_X := torquex; TORQUE21_Y := torquey; TORQUE21_Z := torquez; };
+	if pro_id = 22 then { TORQUE22_X := torquex; TORQUE22_Y := torquey; TORQUE22_Z := torquez; };
+	if pro_id = 23 then { TORQUE23_X := torquex; TORQUE23_Y := torquey; TORQUE23_Z := torquez; };
+	if pro_id = 24 then { TORQUE24_X := torquex; TORQUE24_Y := torquey; TORQUE24_Z := torquez; };
+	if pro_id = 25 then { TORQUE25_X := torquex; TORQUE25_Y := torquey; TORQUE25_Z := torquez; };
+}
+
+//read the torque acting on a protein	 
+function real readtorque(integer pro_id, integer dimension) {
+	checkproid(pro_id);
+	if dimension > 3 or dimension < 1 then {
+		printf "dimension = %d must be 1, 2 or 3\n",dimension;
+		endjob();
+	};
+	if pro_id=1 then {if dimension=1 then {return TORQUE1_X;};if dimension=2 then {return TORQUE1_Y;};if dimension=3 then {return TORQUE1_Z;};};
+	if pro_id=2 then {if dimension=1 then {return TORQUE2_X;};if dimension=2 then {return TORQUE2_Y;};if dimension=3 then {return TORQUE2_Z;};};
+	if pro_id=3 then {if dimension=1 then {return TORQUE3_X;};if dimension=2 then {return TORQUE3_Y;};if dimension=3 then {return TORQUE3_Z;};};
+	if pro_id=4 then {if dimension=1 then {return TORQUE4_X;};if dimension=2 then {return TORQUE4_Y;};if dimension=3 then {return TORQUE4_Z;};};
+	if pro_id=5 then {if dimension=1 then {return TORQUE5_X;};if dimension=2 then {return TORQUE5_Y;};if dimension=3 then {return TORQUE5_Z;};};
+	if pro_id=6 then {if dimension=1 then {return TORQUE6_X;};if dimension=2 then {return TORQUE6_Y;};if dimension=3 then {return TORQUE6_Z;};};
+	if pro_id=7 then {if dimension=1 then {return TORQUE7_X;};if dimension=2 then {return TORQUE7_Y;};if dimension=3 then {return TORQUE7_Z;};};
+	if pro_id=8 then {if dimension=1 then {return TORQUE8_X;};if dimension=2 then {return TORQUE8_Y;};if dimension=3 then {return TORQUE8_Z;};};
+	if pro_id=9 then {if dimension=1 then {return TORQUE9_X;};if dimension=2 then {return TORQUE9_Y;};if dimension=3 then {return TORQUE9_Z;};};
+	if pro_id=10 then {if dimension=1 then {return TORQUE10_X;};if dimension=2 then {return TORQUE10_Y;};if dimension=3 then {return TORQUE10_Z;};};
+	if pro_id=11 then {if dimension=1 then {return TORQUE11_X;};if dimension=2 then {return TORQUE11_Y;};if dimension=3 then {return TORQUE11_Z;};};
+	if pro_id=12 then {if dimension=1 then {return TORQUE12_X;};if dimension=2 then {return TORQUE12_Y;};if dimension=3 then {return TORQUE12_Z;};};
+	if pro_id=13 then {if dimension=1 then {return TORQUE13_X;};if dimension=2 then {return TORQUE13_Y;};if dimension=3 then {return TORQUE13_Z;};};
+	if pro_id=14 then {if dimension=1 then {return TORQUE14_X;};if dimension=2 then {return TORQUE14_Y;};if dimension=3 then {return TORQUE14_Z;};};
+	if pro_id=15 then {if dimension=1 then {return TORQUE15_X;};if dimension=2 then {return TORQUE15_Y;};if dimension=3 then {return TORQUE15_Z;};};
+	if pro_id=16 then {if dimension=1 then {return TORQUE16_X;};if dimension=2 then {return TORQUE16_Y;};if dimension=3 then {return TORQUE16_Z;};};
+	if pro_id=17 then {if dimension=1 then {return TORQUE17_X;};if dimension=2 then {return TORQUE17_Y;};if dimension=3 then {return TORQUE17_Z;};};
+	if pro_id=18 then {if dimension=1 then {return TORQUE18_X;};if dimension=2 then {return TORQUE18_Y;};if dimension=3 then {return TORQUE18_Z;};};
+	if pro_id=19 then {if dimension=1 then {return TORQUE19_X;};if dimension=2 then {return TORQUE19_Y;};if dimension=3 then {return TORQUE19_Z;};};
+	if pro_id=20 then {if dimension=1 then {return TORQUE20_X;};if dimension=2 then {return TORQUE20_Y;};if dimension=3 then {return TORQUE20_Z;};};
+	if pro_id=21 then {if dimension=1 then {return TORQUE21_X;};if dimension=2 then {return TORQUE21_Y;};if dimension=3 then {return TORQUE21_Z;};};
+	if pro_id=22 then {if dimension=1 then {return TORQUE22_X;};if dimension=2 then {return TORQUE22_Y;};if dimension=3 then {return TORQUE22_Z;};};
+	if pro_id=23 then {if dimension=1 then {return TORQUE23_X;};if dimension=2 then {return TORQUE23_Y;};if dimension=3 then {return TORQUE23_Z;};};
+	if pro_id=24 then {if dimension=1 then {return TORQUE24_X;};if dimension=2 then {return TORQUE24_Y;};if dimension=3 then {return TORQUE24_Z;};};
+	if pro_id=25 then {if dimension=1 then {return TORQUE25_X;};if dimension=2 then {return TORQUE25_Y;};if dimension=3 then {return TORQUE25_Z;};};
+}
+
+//returns the magnitude of the force acting on a protein
+function real forcemag(integer pro_id) {
+	return (readforce(pro_id,1)^2 + readforce(pro_id,2)^2 + readforce(pro_id,3)^2)^0.5;
+}
+
+//returns the magnitude of the torque acting on a protein
+function real torquemag(integer pro_id) {
+	return (readtorque(pro_id,1)^2 + readtorque(pro_id,2)^2 + readtorque(pro_id,3)^2)^0.5;
+}
+
+//calculates the elements of a rotation matrix based on axis and angle.  elements are global variables.
+procedure setrotationmatrix(real angle, real axisx, real axisy, real axisz) {
+	local axislength; axislength := (axisx^2 + axisy^2 + axisz^2)^0.5;
+	axisx := axisx/axislength;
+	axisy := axisy/axislength;
+	axisz := axisz/axislength;
+	cosangle := cos(angle);
+	sinangle := sin(angle);
+
+	Rxx := (1-cosangle)*axisx*axisx + cosangle;
+	Rxy := (1-cosangle)*axisx*axisy - sinangle*axisz;
+	Rxz := (1-cosangle)*axisx*axisz + sinangle*axisy;
+	Ryx := (1-cosangle)*axisy*axisx + sinangle*axisz;
+	Ryy := (1-cosangle)*axisy*axisy + cosangle;
+	Ryz := (1-cosangle)*axisy*axisz - sinangle*axisx;
+	Rzx := (1-cosangle)*axisz*axisx - sinangle*axisy;
+	Rzy := (1-cosangle)*axisz*axisy + sinangle*axisx;
+	Rzz := (1-cosangle)*axisz*axisz + cos(angle);
+}
+
+//retrns whether a given constraint corresponds to a protein constraint
+function integer v_on_protein(integer vcon) {
+	if vcon >= FIRST_PROTEIN_CONSTRAINT then {
+		return 1;
+	} else {
+		return 0;
+	};
+}
+
+//returns whether a given constraint in an box edge constraint
+function integer v_on_edge(integer vcon) {
+	if vcon > 0 and vcon < FIRST_PROTEIN_CONSTRAINT then {
+		return 1;
+	} else {
+		return 0;
+	};
+}
+
+//returns whether a given constraint corresponds to the boundary of a protein
+function integer v_on_protein_edge(integer vcon) {
+	if vcon >= FIRST_PROTEIN_CONSTRAINT and 2*floor(vcon/2) = vcon then {
+		return 1;
+	} else {
+		return 0;
+	};
+}
+
+//returns whether a given edge id corresponds to a box edge
+function integer e_on_edge(integer e_id) {
+	if edges[e_id].__e_constraint_list[1] > 1 then {
+		if edges[e_id].__e_constraint_list[2] < FIRST_PROTEIN_CONSTRAINT then {
+			return 1;
+		};
+	};
+	return 0;
+}
+
+//returns whether a given edge id corresponds to an edge in the middle of a protein (i.e. not on its boundary)
+function integer e_in_protein_middle(integer e_id) {
+	if edges[e_id].__e_constraint_list[1] = 1 then {
+		if edges[e_id].__e_constraint_list[2] >= FIRST_PROTEIN_CONSTRAINT then {
+			return 1;
+		};
+	};
+	return 0;
+}	
+
+//calculates the centre of the sphere which describes a protein
+function real centre(integer pro_id, integer dimension) {
+	checkproid(pro_id);
+	if dimension > 3 or dimension < 1 then {
+		printf "dimension = %d must be 1, 2 or 3\n",dimension;
+		endjob();
+	};
+	return readpos(pro_id,dimension) + reador(pro_id,dimension)*DIST_TO_CENTRE;
+}
+
+//returns the area of a triangel where a and b are two edges
+function real triangle_area (real ax, real ay, real az, real bx, real by, real bz) {
+	local areacalc;
+	areacalc := (ay*bz-az*by)^2 + (ax*bz-az*bx)^2 + (ax*by-ay*bx)^2;
+	areacalc := sqrt(areacalc)/2;
+	return areacalc; 
+}
+
+//unfixes all the vertices -- required before doing refinement, coarsening or retriangulation
+procedure unfixall() {
+	unfix vertices where con >= 0;
+}
+
+//fixes vertices on protein constraints -- required before minimising energy -- assumes constraints are turned off
+procedure fixall() {
+	fix vertices where con >= FIRST_PROTEIN_CONSTRAINT;
+}
+
+//turns protein constraints off -- required before minimising or calculating energy
+procedure conoff() {
+	set vertex con 0;
+	local ii; local cc;
+	for (cc := 1; cc < FIRST_PROTEIN_CONSTRAINT; cc+=1) {
+		set vertex con cc where on_constraint cc;
+	};
+	for (ii := 1; ii <= NUM_PROS; ii += 1) {
+		set vertex con FIRST_PROTEIN_CONSTRAINT-2+2*ii where on_constraint FIRST_PROTEIN_CONSTRAINT-2+2*ii;
+		set vertex con FIRST_PROTEIN_CONSTRAINT-1+2*ii where on_constraint FIRST_PROTEIN_CONSTRAINT-1+2*ii;
+		unset vertex constraint FIRST_PROTEIN_CONSTRAINT-2+2*ii;
+		unset vertex constraint FIRST_PROTEIN_CONSTRAINT-1+2*ii;
+	};
+}
+
+//turns protein constraints on -- required before doing refinement, coarsening or retriangulation
+procedure conon() {
+	local ii;
+	for (ii := 1; ii <= NUM_PROS; ii += 1) {
+		set vertex constraint FIRST_PROTEIN_CONSTRAINT-2+2*ii where con=FIRST_PROTEIN_CONSTRAINT-2+2*ii or con=FIRST_PROTEIN_CONSTRAINT-1+2*ii;
+		set vertex constraint FIRST_PROTEIN_CONSTRAINT-1+2*ii where con=FIRST_PROTEIN_CONSTRAINT-1+2*ii;
+	};
+}
+
+//works out what length each edge should be
+procedure setlengoals() {
+	local distance;
+	local colorlevel;
+	local fi;
+	local xpos; local ypos;
+	local x_at_protein;
+	foreach edge ee do {
+		xpos := ee.vertex[1].x/2 + ee.vertex[2].x/2;
+		ypos := ee.vertex[1].y/2 + ee.vertex[2].y/2;
+		distance :=  (xpos^2+ypos^2)^0.5;
+		if distance < RADIUS_SMALL then {
+			ee.lengoal := length_small;
+		} else {
+			ee.lengoal := (distance/RADIUS_SMALL)^LENGTH_SCALING*length_small;
+		};
+		colorlevel := 0;
+		for (fi :=1;fi<=ee.valence;fi+=1) {
+			colorlevel += ee.facets[fi].color;
+		};
+		colorlevel := colorlevel/ee.valence;
+		ee.lengoal := ee.lengoal/COLORSCALE^(colorlevel);
+	};
+}
+
+//deletes all edges smaller than they should be
+procedure coarsen() {
+	unfixall();
+	conon();
+	delete edge ee where length < ee.lengoal;
+	conoff();
+	fixall();
+}
+
+//refine all edges longer than they should be
+procedure rnew() {
+	unfixall();
+	conon();
+	setlengoals();
+	refine edge ee where length > RFACTOR * ee.lengoal; 
+	conoff();
+	fixall();
+}
+
+//does equiangulation
+procedure unew() {
+	unfixall();
+	conon();
+	u;
+	conoff();
+	fixall();
+}
+
+//checks to see if any dihedral_angles are larger than they should be
+//if they are the color of the appropriate faces is increased to reduce the edge lengths
+procedure dihedral_color(real dihedral_cutoff) {
+	local temp;
+	local random1;
+	local colorav;
+	local ei; local fi;local ii;local vi;
+	local countercol;
+
+	foreach facet ff do {
+
+		// if a dihedral angle is too large increase the color of surrounding faces
+		if (ff.edges[1].dihedral > dihedral_cutoff or ff.edges[2].dihedral > dihedral_cutoff or ff.edges[3].dihedral > dihedral_cutoff) then {
+			temp :=  ff.color;
+			ff.color := temp + 1;
+		};
+
+		// if a dihedral angle is too small decease the color of surrounding faces
+		// do not apply to faces on the edge of the box since dihedrals not calculated here
+		if  (ff.edges[1].dihedral < dihedral_cutoff/DFACTOR  and ff.edges[2].dihedral < dihedral_cutoff/DFACTOR  and ff.edges[3].dihedral < dihedral_cutoff/DFACTOR
+		and (e_on_edge(ff.edges[1].id) = 0) and (e_on_edge(ff.edges[2].id) = 0) and (e_on_edge(ff.edges[3].id) = 0)) then {
+			if ff.color > 0 then {
+				temp := ff.color;
+				random1 := random;
+				if random < COLOR_DOWN_CHANCE then {
+					ff.color := temp - 1;
+				};
+			};
+		};
+	};
+
+	//now set each facets color to average of its own and surrounding facets colors
+	//this helps stability		
+	foreach facet ff do {
+		colorav := 0;
+		countercol := 0;
+		for (ei := 1; ei <= ff.valence; ei += 1) {
+			for (fi := 1; fi <= ff.edges[ei].valence; fi += 1) {
+				colorav += ff.edges[ei].facets[fi].color;
+				countercol += 1;
+			};
+		};
+		colorav := colorav/countercol;
+		random1 := random;
+		if random < (ceil(colorav) - colorav) then {
+			colorav := floor(colorav);
+		} else {
+			colorav := ceil(colorav);
+		};
+		ff.color := colorav;
+	};		
+		
+}
+
+//refines, coarsens, etc surface
+procedure rf() {rnew();unew();coarsen();unew();}
+
+//sets the level of refinement
+//useful for initial setting up
+procedure setlevel (integer level_set) {
+	level := level_set;
+	length_small := LENGTH_SMALL_L1*2/(2^level);
+}
+
+//translate a protein and the surrounds membrane with it
+function real translateproteinsmooth (integer pro_id, real stepx, real stepy, real stepz) {
+	local steplength;
+	steplength := (stepx^2+stepy^2+stepz^2)^0.5;
+	local con_num; local con_edge_num;
+	local centrex; local centrey; local centrez;
+	centrex := readpos(pro_id,1);
+	centrey := readpos(pro_id,2);
+	centrez := readpos(pro_id,3);
+	con_num := pro_id * 2 + FIRST_PROTEIN_CONSTRAINT-2;
+	con_edge_num := pro_id * 2 + FIRST_PROTEIN_CONSTRAINT-1;
+	local distance;
+	local stepscale;
+
+	//find closest protein edge or wall
+	local lebensraum;
+	lebensraum := R_RIM;
+	foreach vertex vv where (v_on_edge(vv.con) = 1 or v_on_protein_edge(vv.con) = 1) and vv.con != con_edge_num do {
+		distance := ( (vv.x-centrex)^2 + (vv.y-centrey)^2 + (vv.z-centrez)^2 )^0.5;
+		distance_par_or := (vv.x-centrex)*reador(pro_id,1)+(vv.y-centrey)*reador(pro_id,2)+(vv.z-centrez)*reador(pro_id,3);
+		distance_perp_or := sqrt(distance^2-distance_par_or^2);
+		distance := sqrt(distance_par_or^2 + (maximum(distance_perp_or,R_PRO)-R_PRO)^2);
+		lebensraum := minimum(lebensraum,distance);
+	};
+	if lebensraum < TRANSLATE_SAFETY_FACTOR*steplength then {
+		movefactor := lebensraum/(TRANSLATE_SAFETY_FACTOR*steplength);
+	} else {
+		movefactor := 1;
+	};
+
+	foreach vertex vv do {
+		distance := ((vv.x-centrex)^2+(vv.y-centrey)^2+(vv.z-centrez)^2)^0.5;
+		distance_par_or := (vv.x-centrex)*reador(pro_id,1)+(vv.y-centrey)*reador(pro_id,2)+(vv.z-centrez)*reador(pro_id,3);
+		distance_perp_or := sqrt(distance^2-distance_par_or^2);
+		distance := sqrt(distance_par_or^2 + (maximum(distance_perp_or,R_PRO)-R_PRO)^2);
+
+		if distance < lebensraum then {
+			stepscale := (cos(pi*distance/lebensraum) + 1)/2;
+			vv.x := vv.x + stepscale*stepx*movefactor; 
+			vv.y := vv.y + stepscale*stepy*movefactor; 
+			vv.z := vv.z + stepscale*stepz*movefactor; 
+		};
+	};
+	setpos(pro_id,centrex + stepx*movefactor,centrey + stepy*movefactor,centrez + stepz*movefactor);
+	printf "protein %d - translation direction %f %f %f - dist tried %f - dist moved %f - lebensraum %f\n",
+		pro_id, stepx/steplength, stepy/steplength, stepz/steplength,steplength, steplength*movefactor, lebensraum;
+	return movefactor*steplength;
+}
+
+//tilt a protein and the surrounds membrane with it
+function real tiltproteinsmooth (integer pro_id, real angle, real axisx, real axisy, real axisz) {
+	local axis_length;
+	axis_length := (axisx^2+axisy^2+axisz^2)^0.5;
+	axisx := axisx/axis_length;
+	axisy := axisy/axis_length;
+	axisz := axisz/axis_length;
+
+	local con_num; local con_edge_num;
+	local centrex; local centrey; local centrez;
+	centrex := readpos(pro_id,1);
+	centrey := readpos(pro_id,2);
+	centrez := readpos(pro_id,3);
+	con_num := pro_id * 2 + FIRST_PROTEIN_CONSTRAINT-2;
+	con_edge_num := pro_id * 2 + FIRST_PROTEIN_CONSTRAINT-1;
+	local distance; local distance_par_or; local distance_perp_or;
+	local anglescale;
+
+	//find closest protein edge or wall
+	local lebensraum;
+	lebensraum := R_RIM;
+	foreach vertex vv where (v_on_edge(vv.con) = 1 or v_on_protein_edge(vv.con) = 1) and vv.con != con_edge_num do {
+		distance := ((vv.x-centrex)^2+(vv.y-centrey)^2+(vv.z-centrez)^2)^0.5;
+		distance_par_or := (vv.x-centrex)*reador(pro_id,1)+(vv.y-centrey)*reador(pro_id,2)+(vv.z-centrez)*reador(pro_id,3);
+		distance_perp_or := sqrt(distance^2-distance_par_or^2);
+		distance := sqrt(distance_par_or^2 + (maximum(distance_perp_or,R_PRO)-R_PRO)^2);
+		lebensraum := minimum(lebensraum,distance);
+	};
+	if lebensraum < abs(TILT_SAFETY_FACTOR*angle*R_PRO) then {
+		movefactor := lebensraum/abs((TILT_SAFETY_FACTOR*angle*R_PRO));
+	} else {
+		movefactor := 1;
+	};
+	local counter; counter := 1;
+	foreach vertex vv do {
+		if vv.con = con_num or vv.con = con_edge_num then {
+			anglescale := 1;
+		} else {
+			distance := ((vv.x-centrex)^2+(vv.y-centrey)^2+(vv.z-centrez)^2)^0.5;
+			distance_par_or := (vv.x-centrex)*reador(pro_id,1)+(vv.y-centrey)*reador(pro_id,2)+(vv.z-centrez)*reador(pro_id,3);
+			distance_perp_or := sqrt(distance^2-distance_par_or^2);
+			distance := sqrt(distance_par_or^2 + (maximum(distance_perp_or,R_PRO)-R_PRO)^2);
+			if distance < lebensraum then {
+				anglescale := (cos(pi*distance/lebensraum) + 1)/2.0;
+			};
+			if distance >= lebensraum then {		
+				anglescale := 0;
+			};
+		};
+		//get rotation matrix
+		counter += 1;
+		setrotationmatrix(angle*anglescale*movefactor,axisx,axisy,axisz);
+		local xnew; local ynew; local znew;
+		xnew := centrex + Rxx * (vv.x-centrex) + Rxy * (vv.y-centrey) + Rxz * (vv.z-centrez);
+		ynew := centrey + Ryx * (vv.x-centrex) + Ryy * (vv.y-centrey) + Ryz * (vv.z-centrez);
+		znew := centrez + Rzx * (vv.x-centrex) + Rzy * (vv.y-centrey) + Rzz * (vv.z-centrez);
+		vv.x := xnew;
+		vv.y := ynew;
+		vv.z := znew;
+	};
+
+	//get new orientation vector
+	setrotationmatrix(angle*movefactor,axisx,axisy,axisz);
+	local orx; local ory; local orz;
+	orx := reador(pro_id,1);
+	ory := reador(pro_id,2);
+	orz := reador(pro_id,3);
+	setor(pro_id,Rxx * orx + Rxy * ory + Rxz * orz,Ryx * orx + Ryy * ory + Ryz * orz,Rzx * orx + Rzy * ory + Rzz * orz);
+	printf "protein %d - tilt direction %f %f %f - angle tried %f - angle rotated %f - lebensraum %f\n",pro_id, axisx, axisy, axisz,angle, angle*movefactor, lebensraum;
+	return angle*movefactor;
+}
+
+//translate a protein - but not any membrane
+procedure translateprotein (integer pro_id,real stepx, real stepy, real stepz) {
+	local steplength;
+	steplength := (stepx^2+stepy^2+stepz^2)^0.5;
+	local con_num; local con_edge_num;
+	local centrex; local centrey; local centrez;
+	centrex := readpos(pro_id,1);
+	centrey := readpos(pro_id,2);
+	centrez := readpos(pro_id,3);
+	con_num := pro_id * 2 + FIRST_PROTEIN_CONSTRAINT-2;
+	con_edge_num := pro_id * 2 + FIRST_PROTEIN_CONSTRAINT-1;
+	movefactor := 1;
+	foreach vertex vv where con=con_num or con=con_edge_num  do {
+		vv.x := vv.x + stepx*movefactor;
+		vv.y := vv.y + stepy*movefactor;
+		vv.z := vv.z + stepz*movefactor;
+	};
+	setpos(pro_id,centrex + stepx*movefactor,centrey + stepy*movefactor,centrez + stepz*movefactor);
+}
+
+//tilt a protein - but not any membrane
+procedure tiltprotein (integer pro_id, real angle, real axisx, real axisy, real axisz) {
+	local axis_length;
+	axis_length := (axisx^2+axisy^2+axisz^2)^0.5;
+	axisx := axisx/axis_length;
+	axisy := axisy/axis_length;
+	axisz := axisz/axis_length;
+
+	local con_num; local con_edge_num;
+	local centrex; local centrey; local centrez;
+	centrex := readpos(pro_id,1);
+	centrey := readpos(pro_id,2);
+	centrez := readpos(pro_id,3);
+	con_num := pro_id * 2 + FIRST_PROTEIN_CONSTRAINT-2;
+	con_edge_num := pro_id * 2 + FIRST_PROTEIN_CONSTRAINT-1;
+
+	//get rotation matrix
+	setrotationmatrix(angle,axisx,axisy,axisz);
+	foreach vertex vv where con=con_num or con=con_edge_num do {
+		local xnew; local ynew; local znew;
+		xnew := centrex + Rxx * (vv.x-centrex) + Rxy * (vv.y-centrey) + Rxz * (vv.z-centrez);
+		ynew := centrey + Ryx * (vv.x-centrex) + Ryy * (vv.y-centrey) + Ryz * (vv.z-centrez);
+		znew := centrez + Rzx * (vv.x-centrex) + Rzy * (vv.y-centrey) + Rzz * (vv.z-centrez);
+		vv.x := xnew;
+		vv.y := ynew;
+		vv.z := znew;
+	};
+
+	//get new orientation vector
+	local orx; local ory; local orz;
+	orx := reador(pro_id,1);
+	ory := reador(pro_id,2);
+	orz := reador(pro_id,3);
+	setor(pro_id,Rxx * orx + Rxy * ory + Rxz * orz,Ryx * orx + Ryy * ory + Ryz * orz,Rzx * orx + Rzy * ory + Rzz * orz);
+}
+
+//calculate the force acting on a protein - assumes we have converged membrane shape
+procedure calcforce (integer pro_id, real step) {
+	local nrg; nrg := total_energy;
+	local dEdd_x; local dEdd_y; local dEdd_z;
+	translateprotein(pro_id,step,0,0);
+	dEdd_x := (total_energy - nrg)/step;
+	translateprotein(pro_id,-step,step,0);
+	dEdd_y := (total_energy - nrg)/step;
+	translateprotein(pro_id,0,-step,step);
+	dEdd_z := (total_energy - nrg)/step;
+	translateprotein(pro_id,0,0,-step);
+	setforce(pro_id,-dEdd_x,-dEdd_y,-dEdd_z);
+}
+
+procedure printforce (integer pro_id) {
+	printf "%1.12f %1.12f %1.12f\n",readforce(pro_id,1),readforce(pro_id,2),readforce(pro_id,3);
+}
+procedure printtorque (integer pro_id) {
+	printf "%1.12f %1.12f %1.12f\n",readtorque(pro_id,1),readtorque(pro_id,2),readtorque(pro_id,3);
+}
+
+//calculate the torque acting on a protein -- assumes we have converged membrane shape
+procedure calctorque (integer pro_id, real angle) {
+	local nrg; nrg := total_energy;
+	local dEdt_x; local dEdt_y; local dEdt_z;
+	tiltprotein(pro_id,angle,1,0,0);
+	dEdt_x := (total_energy - nrg)/angle;
+	tiltprotein(pro_id,angle,-1,0,0);
+	tiltprotein(pro_id,angle,0,1,0);
+	dEdt_y := (total_energy - nrg)/angle;
+	tiltprotein(pro_id,angle,0,-1,0);
+	tiltprotein(pro_id,angle,0,0,1);
+	dEdt_z := (total_energy - nrg)/angle;
+	tiltprotein(pro_id,angle,0,0,-1);
+	settorque(pro_id,-dEdt_x, -dEdt_y, -dEdt_z);
+}
+
+//converges the shape of the membrane 
+procedure converge(integer hessian_calls, integer refine_every_step) {
+	local energy_old; energy_old := total_energy;
+	local energy_vold; energy_vold := total_energy;
+	local energy_vvold; energy_vvold := total_energy;
+	local energy_diff; energy_diff := 999999999;
+	local repeat_counts; repeat_counts := 0;
+	local trickystuff; if hessian_calls = 0 then { trickystuff := 1; hessian_calls := 1 } else { trickystuff := 0 };
+	while energy_diff > CONVERGE_TOLERANCE*maximum(maximum(energy_old,energy_vold),energy_vvold) do {
+		if refine_every_step = 1 or (repeat_counts = 0 and !(trickystuff = 1 and hessian_calls > 1)) then { 
+			rnew();unew();coarsen();unew();
+		};
+		{hessian_seek} hessian_calls;
+		energy_diff := minimum(minimum(abs(total_energy - energy_old),abs(total_energy-energy_vold)),abs(total_energy-energy_vvold));
+		energy_vvold := energy_vold;
+		energy_vold := energy_old;
+		energy_old := total_energy;
+		repeat_counts += 1;
+		if trickystuff = 1 and repeat_counts = 4 then {
+			repeat_counts := 0;
+			hessian_calls += 1;
+		};
+	};
+}
+
+procedure fastconverge() {
+	local energy_old; energy_old := total_energy; 
+	local energy_vold; energy_vold := total_energy;	       
+	local energy_vvold; energy_vvold := total_energy;
+	local energy_diff; energy_diff := 999999999;
+	loop_size := 2;
+	counter := 0;
+	while energy_diff > CONVERGE_TOLERANCE*maximum(maximum(energy_old,energy_vold),energy_vvold) do {
+	        rnew();unew();coarsen();unew();
+	        for (loop := 1; loop <= loop_size; loop += 1) {
+		        hessian_seek;
+			if loop = loop_size - 1 then {
+			        energy_2ndtolast := total_energy;
+			};
+		};
+		if loop_size > 1 and (abs(total_energy - energy_2ndtolast) < CONVERGE_TOLERANCE) then {
+		   	loop_size -= 1;
+			counter := 0;
+		} else {
+		        counter += 1;
+		};
+		if counter = 4 then {
+		   	loop_size += 1;
+			counter := 0;
+		};
+		energy_diff := minimum(minimum(abs(total_energy - energy_old),abs(total_energy-energy_vold)),abs(total_energy-energy_vvold));
+		energy_vvold := energy_vold;
+		energy_vold := energy_old;
+		energy_old := total_energy;
+	};
+};
+
+//adjusts the color of faces until there remain no edges with large dihedral angles
+procedure colorconverge(integer hessian_calls) {
+	local sharpangles;
+	sharpangles := 1;
+	while sharpangles != 0 do {
+		fastconverge();
+		dihedral_color(DIHEDRAL_MAX);
+		sharpangles := 0;
+		foreach edge ee where e_in_protein_middle(ee.id) = 0 and  dihedral > DIHEDRAL_MAX * DIHEDRAL_TOLERANCE_FACTOR do sharpangles += 1;
+		printf "There are %d sharp edges left in the simulation\n",sharpangles;
+	};
+}
+
+//runs converge and colorconverge
+procedure convergesimple() {
+	colorconverge(0);
+	fastconverge();
+};
+
+//proteins move according to the forces and torques on them
+procedure moveproteins(integer moveprotein1) {
+	//find forces and torques on proteins
+	local ii;
+	for (ii := 1; ii <= NUM_PROS; ii += 1) {
+		calcforce(ii,DIST_STEP);
+		calctorque(ii,TILT_STEP);
+	};
+
+	local step;
+	local tilt;
+	local force;
+	local torque;
+	local dist_moved; local angle_moved;
+	local start_protein; start_protein := 1;
+	if (moveprotein1 = 0) then {
+		start_protein := 2;
+		force := readforce(1,3);
+		step := force/TRANSLATE_FRICTION;
+		if step > TRANSLATE_MAX then step := TRANSLATE_MAX;
+		dist_moved := translateproteinsmooth(1,0,0,step);
+		printf "%f %f %f %f %f %f %f %f %f %f %f %f ",
+			readpos(1,1), readpos(1,2), readpos(1,3), reador(1,1), reador(1,2), reador(1,3), 
+			readforce(1,1), readforce(1,2), readforce(1,3), readtorque(1,1), readtorque(1,2), readtorque(1,3)
+		>> "n2a5-8n002d2-0e8.move";
+	};
+	for (ii := start_protein; ii <= NUM_PROS; ii += 1) {
+		force := forcemag(ii);
+		torque := torquemag(ii);
+		step := force/TRANSLATE_FRICTION;
+		tilt := torque/TILT_FRICTION;
+		if step > TRANSLATE_MAX then step := TRANSLATE_MAX; 
+		if tilt > TILT_MAX then tilt := TILT_MAX; 
+		dist_moved := translateproteinsmooth(ii,step*readforce(ii,1)/force,step*readforce(ii,2)/force,step*readforce(ii,3)/force);
+		anglemoved := tiltproteinsmooth(ii,tilt,readtorque(ii,1)/torque,readtorque(ii,2)/torque,readtorque(ii,3)/torque);
+		printf "%f %f %f %f %f %f %f %f %f %f %f %f ",
+			readpos(ii,1), readpos(ii,2), readpos(ii,3), reador(ii,1), reador(ii,2), reador(ii,3), 
+			readforce(ii,1), readforce(ii,2), readforce(ii,3), readtorque(ii,1), readtorque(ii,2), readtorque(ii,3)
+		>> "n2a5-8n002d2-0e8.move";
+	};
+	printf "\n" >> "n2a5-8n002d2-0e8.move";
+}
+
+procedure measure_and_print(integer pro_id) {
+	calctorque(pro_id,tilt_step);
+	calcforce(pro_id,dist_step);
+	printf "Position is %f %f %f Orientation is %f %f %f Force is %f %f %f Torque is %f %f %f ",
+		readpos(pro_id,1),readpos(pro_id,2),readpos(pro_id,3),
+		reador(pro_id,1),reador(pro_id,2),reador(pro_id,3),
+		readforce(pro_id,1),readforce(pro_id,2),readforce(pro_id,3),
+		readtorque(pro_id,1),readtorque(pro_id,2),readtorque(pro_id,3);
+	calctorque(pro_id,tilt_step*10);
+	calcforce(pro_id,dist_step*10);
+	printf "Force_check is %f %f %f Torque_check is %f %f %f Energy is %f\n",
+		readforce(pro_id,1),readforce(pro_id,2),readforce(pro_id,3),
+		readtorque(pro_id,1),readtorque(pro_id,2),readtorque(pro_id,3), total_energy;
+};	
+
+
+//find the tilt of a protein that sets torque to 0
+//an axis around which the protein is tilted must be given so that search is in 1D not 3D!
+procedure optimisetilt (integer pro_id, real axis_x, real axis_y, real axis_z, real step, real min_step, real torque_tolerance) {
+	local torquex; local torquey; local torquez;
+	local axislength;
+	local angle_tilted;
+	axislength := (axis_x^2 + axis_y^2 + axis_z^2)^0.5;
+	axis_x := axis_x/axislength;
+	axis_y := axis_y/axislength;
+	axis_z := axis_z/axislength;
+	local magnitude;
+	convergesimple();
+	calctorque(pro_id,tilt_step);
+	magnitude1 := readtorque(pro_id,1) * axis_x +  readtorque(pro_id,2) * axis_y + readtorque(pro_id,3) * axis_z;
+
+	measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.optimisetilt";
+	
+	local direction_tilt;
+	if magnitude1 > 0 then {direction_tilt := 1} else {direction_tilt := -1};
+	
+	angle_tilted := tiltproteinsmooth(pro_id,direction_tilt*step,axis_x,axis_y,axis_z);
+	convergesimple();
+	calctorque(pro_id,tilt_step);
+	magnitude2 := readtorque(pro_id,1) * axis_x +  readtorque(pro_id,2) * axis_y + readtorque(pro_id,3) * axis_z;
+	measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.optimisetilt";
+
+	while magnitude1 * magnitude2 > 0 do {
+		angle_tilted := tiltproteinsmooth(pro_id,angle_tilted*2,axis_x,axis_y,axis_z);
+		convergesimple();
+		calctorque(pro_id,tilt_step);
+		magnitude1 := magnitude2;
+		magnitude2 := readtorque(pro_id,1) * axis_x +  readtorque(pro_id,2) * axis_y + readtorque(pro_id,3) * axis_z;
+		measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.optimisetilt";
+	};
+
+	printf "angle_tilted is %f and min_step is %f and magnitude is %f and torque_tolerance is %f\n",angle_tilted,min_step,magnitude2,torque_tolerance;
+	while (abs(angle_tilted) > min_step and abs(magnitude2) > torque_tolerance) do {
+		angle_tilted := tiltproteinsmooth(pro_id,-angle_tilted/2,axis_x,axis_y,axis_z);
+		convergesimple();
+		calctorque(pro_id,tilt_step);
+		magnitude1 := readtorque(pro_id,1) * axis_x +  readtorque(pro_id,2) * axis_y + readtorque(pro_id,3) * axis_z;
+		if magnitude1 * magnitude2 > 0 then {
+			angle_tilted := -angle_tilted;
+		};
+		magnitude2 := magnitude1;
+		measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.optimisetilt";
+
+	};
+}
+
+//scan back and forth around the point where the torque goes to 0
+procedure zoomscan_tilts(integer pro_id, real axis_x, real axis_y, real axis_z, real step, real num_steps, real num_scans) {
+	local torquex; local torquey; local torquez;
+	local axislength;
+	local angle_tilted;
+	axislength := (axis_x^2 + axis_y^2 + axis_z^2)^0.5;
+	axis_x := axis_x/axislength;
+	axis_y := axis_y/axislength;
+	axis_z := axis_z/axislength;
+	local magnitude;
+	convergesimple();
+	calctorque(pro_id,tilt_step);
+	magnitude1 := readtorque(pro_id,1) * axis_x +  readtorque(pro_id,2) * axis_y + readtorque(pro_id,3) * axis_z;
+	measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.zoomscan";
+	
+	local direction_tilt;
+	if magnitude1 > 0 then {direction_tilt := 1} else {direction_tilt := -1};
+	total_angle_tilted := 0;
+	angle_tilted := tiltproteinsmooth(pro_id,direction_tilt*step,axis_x,axis_y,axis_z);
+	total_angle_tilted += angle_tilted;
+	convergesimple();
+	calctorque(pro_id,tilt_step);
+	magnitude2 := readtorque(pro_id,1) * axis_x +  readtorque(pro_id,2) * axis_y + readtorque(pro_id,3) * axis_z;
+	measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.zoomscan";
+
+	if direction_tilt*magnitude1 < -direction_tilt*magnitude2/2 then {
+		while direction_tilt*magnitude1 < -direction_tilt*magnitude2/2 do {
+			angle_tilted := tiltproteinsmooth(pro_id,-total_angle_tilted/2,axis_x,axis_y,axis_z);
+			total_angle_tilted += angle_tilted;
+			convergesimple();
+			calctorque(pro_id,tilt_step);
+			magnitude2 := readtorque(pro_id,1) * axis_x +  readtorque(pro_id,2) * axis_y + readtorque(pro_id,3) * axis_z;
+			measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.zoomscan";
+		};
+	} else {
+
+		while direction_tilt*magnitude1 > -direction_tilt*magnitude2 do {
+			angle_tilted := tiltproteinsmooth(pro_id,angle_tilted*2,axis_x,axis_y,axis_z);
+			total_angle_tilted += angle_tilted;
+			convergesimple();
+			calctorque(pro_id,tilt_step);
+			magnitude2 := readtorque(pro_id,1) * axis_x +  readtorque(pro_id,2) * axis_y + readtorque(pro_id,3) * axis_z;
+			measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.zoomscan";
+		};
+	};
+	angle_change := total_angle_tilted;
+	total_angle := total_angle_tilted;
+	angle_step := angle_change/num_steps;
+	for (ii := 0; ii < num_scans; ii += 1) {
+		while (abs(total_angle) > 0) do {
+			angle_tilted := tiltproteinsmooth(pro_id,-direction_tilt*minimum(abs(angle_step), abs(total_angle)),axis_x,axis_y,axis_z);
+			convergesimple();
+			measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.zoomscan";
+			total_angle += angle_tilted;
+		};
+		while (abs(total_angle) < abs(angle_change)) do {
+			angle_tilted := tiltproteinsmooth(pro_id,direction_tilt*minimum(abs(angle_step), abs(angle_change)-abs(total_angle)),axis_x,axis_y,axis_z);
+			convergesimple();
+			measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.zoomscan";
+			total_angle += angle_tilted;
+		};
+	};
+}
+
+procedure scan_tilts(integer pro_id, real axis_x, real axis_y, real axis_z, real angle_change, real angle_step, real min_angle) {
+	local torquex; local torquey; local torquez;
+	local axislength;
+	local total_angle; total_angle := 0;
+	local angle_tilted; angle_tilted := angle_change;
+	local direction; direction := angle_change/abs(angle_change);
+	axislength := (axis_x^2 + axis_y^2 + axis_z^2)^0.5;
+	axis_x := axis_x/axislength;
+	axis_y := axis_y/axislength;
+	axis_z := axis_z/axislength;
+	convergesimple();
+	measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.scan";
+	while (abs(total_angle) < abs(angle_change)) and (abs(angle_tilted) > abs(min_angle)) do {
+		angle_tilted := tiltproteinsmooth(pro_id,direction*minimum(abs(angle_step), abs(angle_change)-abs(total_angle)),axis_x,axis_y,axis_z);
+		convergesimple();
+		measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.scan";
+		total_angle += angle_tilted;
+	};
+	while (abs(total_angle) > 0) do {
+		angle_tilted := tiltproteinsmooth(pro_id,-direction*minimum(abs(angle_step), abs(total_angle)),axis_x,axis_y,axis_z);
+		convergesimple();
+		measure_and_print(pro_id) >> "n2a5-8n002d2-0e8.scan";
+		total_angle += angle_tilted;
+	};
+	convergesimple();
+}
+	
+		
+
+procedure initialise() {
+	foreach face ff do ff.color := 0;
+	set facet tension MEMBRANE_TENSION;
+	sqmean.modulus := 1;
+
+	conoff();
+	fixall();
+
+	setlevel(1);
+}
+
+//DEFINE THE CONSTRAINTS
+
+constraint 1              /* reflection */
+//formula: x1/cos(box_angle/2) = x2/sin(box_angle/2)
+formula: x1 = 0
+
+constraint 2              /* reflection */
+//formula: x1/cos(box_angle/2) = -x2/sin(box_angle/2)
+formula: x1 = 0
+
+constraint 3              /* the boundary rim */
+formula: x1^2 + x2^2 = R_RIM^2
+
+constraint 5              /* protein 1 */
+formula: (x1 - PRO1_X - OR1_X * DIST_TO_CENTRE)^2 + (x2-PRO1_Y - OR1_Y * DIST_TO_CENTRE)^2 + (x3-PRO1_Z - OR1_Z * DIST_TO_CENTRE)^2 = SPHERE_RADIUS^2
+
+constraint 6              /* protein 1 edge*/
+formula: (x1 - PRO1_X + OR1_X * DIST_TO_CENTRE)^2 + (x2-PRO1_Y + OR1_Y * DIST_TO_CENTRE)^2 + (x3-PRO1_Z + OR1_Z * DIST_TO_CENTRE)^2 = SPHERE_RADIUS^2
+
+
+//DEFINE THE STARTING GEOMETRY
+
+vertices   // given in terms of boundary parameter
+
+//boundary rim
+1    0     			0      				0		constraint 1 constraint 2
+2    cos(box_angle/2)*R_RIM	sin(box_angle/2)*R_RIM  	Z_RIM  		constraint 3 constraint 1 
+3    R_RIM  			0    				Z_RIM  		constraint 3 
+4    cos(box_angle/2)*R_RIM     -sin(box_angle/2)*R_RIM		Z_RIM  		constraint 3 constraint 2 
+
+//protein 1 edge
+5	PRO1_X-R_PRO	PRO1_Y		PRO1_Z		constraint 5	constraint 6
+6	PRO1_X		PRO1_Y+R_PRO	PRO1_Z		constraint 5	constraint 6
+7	PRO1_X+R_PRO	PRO1_Y		PRO1_Z		constraint 5	constraint 6
+8	PRO1_X		PRO1_Y-R_PRO	PRO1_Z		constraint 5	constraint 6		
+ 
+//protein 1 centre
+9	PRO1_X		PRO1_Y		PRO1_Z+DIST_TO_CENTRE-SPHERE_RADIUS	constraint 5
+
+edges
+
+//edges on boundary rim
+1	1	2	constraint 1
+2	2	3	constraint 3
+3	3	4	constraint 3
+4	4	1	constraint 2
+
+//edges between proteins and boundary rim
+5	1	5
+6	2	6
+7	3	7
+8	4	8
+
+//edges within protein 1
+9	5	6	constraint 5	constraint 6
+10	6	7	constraint 5	constraint 6
+11	7	8	constraint 5	constraint 6
+12	8	5	constraint 5	constraint 6
+13	5	9	constraint 5
+14	6	9	constraint 5
+15	7	9	constraint 5
+16	8	9	constraint 5
+
+faces
+//faces between proteins and rim
+1	1	6	-9	-5
+2	2	7	-10	-6
+3	3	8	-11	-7
+4	4	5	-12	-8
+	
+//within protein 1
+5	9	14	-13	 constraint 5
+6	10	15	-14	 constraint 5
+7	11	16	-15	 constraint 5
+8	12	13	-16	 constraint 5
+
+//9 9 10 11 12 color red
+read
+
+showq;
+//  now the starting commands
+
+
+procedure runme() {
+  run_tilt := 0;   // set to 1 to apply the single tilt
+
+  true_DIHEDRAL_MAX := DIHEDRAL_MAX;
+  DIHEDRAL_MAX := 0.2;
+  true_CONVERGE_TOLERANCE := CONVERGE_TOLERANCE;
+  CONVERGE_TOLERANCE := CONVERGE_TOLERANCE*1000;
+
+  initialise();
+
+  setlevel(1);
+  {rf()} 8;
+  set facet tension 0.1;
+  converge(5,1);
+  set facet tension MEMBRANE_TENSION;
+  converge(5,1);
+  setlevel(2);
+  {rf()} 3;
+  converge(0,1);
+  setlevel(3);
+  {rf()} 3;
+  convergesimple();
+
+/*
+// ALIGN OR1 TO +X (always)
+while abs(OR1_Z) > 0.0001 do {
+  local theta;
+  if OR1_X = 0 then theta := PI/2 else theta := atan(OR1_Z/-OR1_X);
+  angle_tilted := tiltproteinsmooth(1,-theta,0,1,0);
+  convergesimple();
+};
+// Optional demo tilt only when run_tilt=1
+if (run_tilt) then {
+  angle_tilted := tiltproteinsmooth(1, STARTING_TILT, 0, 1, 0);
+  convergesimple();
+};
+*/
+  // lock the starting distance (this runs regardless of run_tilt)
+  desired_distance := STARTING_DISTANCE;
+  while abs(PRO1_X - desired_distance) > 0.0000001 do {
+    distance_translated := translateproteinsmooth(1,-PRO1_X+desired_distance,0,0);
+    convergesimple();
+  };
+
+  CONVERGE_TOLERANCE := true_CONVERGE_TOLERANCE;
+  convergesimple();
+  DIHEDRAL_MAX := true_DIHEDRAL_MAX;
+  convergesimple();
+  
+    // === ENERGY COMPARISON AT FIXED DISTANCE =========================
+  // Baseline: NO TILT (OR1 is aligned to +x; do not tilt)
+  convergesimple();
+  E_no_tilt := total_energy;
+
+  // Zero-torque tilt about +y (find equilibrium tilt at SAME distance)
+  // step, min_step, torque_tolerance tuned for robustness
+  optimisetilt(1, 0, 1, 0, PI/36, PI/2000, 1e-10);
+  convergesimple();
+  E_tilt := total_energy;
+
+/* true tilt about +y from +z toward +x */
+tilt_rad := atan2(OR1_X, OR1_Z);        /* gives φ in [-PI, PI] */
+tilt_deg := tilt_rad * 180.0 / PI;      /* degrees */
+
+/* (optional) wrap to [0,360):
+# if tilt_deg < 0 then tilt_deg := tilt_deg + 360;
+*/
+
+printf "=== ZERO-TORQUE === r_over_a=%f  E_no_tilt=%.12g  E_tilt=%.12g  dE=%.12g  tilt(rad)=%f  tilt(deg)=%f\n",
+   2*PRO1_X/R_PRO, E_no_tilt, E_tilt, (E_tilt - E_no_tilt), tilt_rad, tilt_deg;
+
+/* also log to file */
+printf "%f %f %f %f %f %f %.12g %.12g %.12g %f %f\n",
+   readpos(1,1), readpos(1,2), readpos(1,3),
+   reador(1,1), reador(1,2), reador(1,3),
+   E_no_tilt, E_tilt, (E_tilt - E_no_tilt),
+   tilt_rad, tilt_deg
+   >> "tilt_compare.txt";
+  // ================================================================
+
+
+  //if (run_tilt) then {
+  //  scan_tilts(1, 0, 1, 0, PI/2, PI/2/40, PI/2/1000);
+  //};
+}
+
+
+
+
+
+
+
