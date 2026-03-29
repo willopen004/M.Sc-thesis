@@ -1,0 +1,2 @@
+first run the hyper surface on the single data file (your data base), this will proccess the data and give you another file.
+then run all other post analysis files on the created file: area_ratio, bistabilty, Fmin, Jint, Keff.

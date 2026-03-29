@@ -1,0 +1,4221 @@
+% this script is the same data gethering script, but with few extra additions:
+% arc size, micro kappa.  
+%% Clear workspace, close figures, and clear command window
+clear all;
+close all;
+clc;
+
+set(groot, ...
+    'defaultAxesFontSize', 30, ...
+    'defaultTextFontSize', 30);
+
+dataFolder = 'C:\my_output_directory\post thesis exam\half_triangle_config\';
+file_name = 'data_table_Intrinsic_Curvature_15.03.2026_10.56.mat';
+plots = false; % do you want to see the data?
+N_neigh = 5; % how many point to take for the micro kappa check
+families = true;
+
+if (families)
+inFile = fullfile(dataFolder, file_name);
+
+familiesPath = build_families_mat_honey_simple(inFile, ...
+    'OutName','families_table.mat', 'Tol',1e-12);
+
+
+% Step 2: Feed it directly to run_hyper_surface
+[folderPath, fName, ext] = fileparts(familiesPath);
+end
+
+folderPath = 'C:\my_output_directory\post thesis exam\half_triangle_config\';
+fname = 'families_table.mat';
+
+run_hyper_surface(folderPath, fname, plots, N_neigh);
+
+function run_hyper_surface (dataFolder, file_name, plots, N_neigh)
+    
+% Compose full file path
+    dataFile = fullfile(dataFolder, file_name);
+    
+    % Load the data file
+    load(dataFile);  % this loads resultTable
+    save_Fig_Folder_name = 'my_post_proc_figures';
+    save_Fig_Folder_path = fullfile(dataFolder, save_Fig_Folder_name);
+    if ~exist(save_Fig_Folder_path, 'dir')
+        mkdir(save_Fig_Folder_path);
+    end
+
+    postProcessingStruct = struct([]); 
+    
+    % familiesTable = rmmissing(familiesTable, 'DataVariables', @isnumeric);  % drop any row with NaN in numeric cols
+    % % resultTable = update_P_in_model_from_curvatures(resultTable);
+    
+    familiesTable.plane_bending_energy = familiesTable.plane_bending_energy ./ 1e10;
+    % resultTable.arc_BmidC = resultTable.arc_BmidC * 2;
+
+    familiesTable = addArcMetrics(familiesTable);
+
+    familiesTable.PSI_honey = 1 - familiesTable.PSI_honey;
+
+    % safe area ratio column (Inf/NaN if analytic_total_area_mix==0)
+    familiesTable.area_ratio = (familiesTable.real_total_area_mix - familiesTable.analytic_total_area_mix) ./ familiesTable.analytic_total_area_mix;
+    
+
+
+    % familiesTable = familiesTable(familiesTable.PHI >= 0.05, :);
+
+    % resultTable = squash_curv_columns(resultTable);
+
+    allPossibleCurvPairs = [familiesTable.Curv_P1, familiesTable.Curv_P2];
+    
+    % Find the unique pairs
+    uniqueCurvPairs = unique(allPossibleCurvPairs, 'rows');
+    
+    % Display them
+    disp('Unique (Curv_P1, Curv_P3) combinations found:');
+    disp(uniqueCurvPairs);
+    
+    %% Extract cap curvatures and corresponding base areas for P1 and P3
+    curvatureCapPair = [familiesTable.Curv_P1  familiesTable.Curv_P2];   % [P1 curvature, P3 curvature]
+    
+    %% Filter to keep only specific Jcap pairs of interest
+    pairsToKeep = [  
+    0.0010    0.0010
+    0.0160    0.0160
+    0.0460    0.0460
+    0.0760    0.0760
+    0.1050    0.1050
+    0.1350    0.1350
+    ];
+
+    % Find which rows match these pairs exactly
+    isDesiredPair = ismember(curvatureCapPair, pairsToKeep, 'rows');
+    
+    % Filter all relevant variables
+    curvatureCapPair = curvatureCapPair(isDesiredPair, :);
+    familiesTable = familiesTable(isDesiredPair, :);
+    
+    %% Gather all intrinsic curvatures and find unique values
+    allIntrinsicCurvatures = curvatureCapPair;                       % Copy all curvature pairs
+    allUniqueIntrinsicCurvatures = unique(allIntrinsicCurvatures(:));% Unique list of all curvature values in P1 and P3
+    
+    %% Prepare unique cap pairs and a set of unique curvature values for reference
+    uniqueCapsPair = unique(allIntrinsicCurvatures, 'rows');         % Unique combination of two caps (P1, P3)
+    uniqueCurvaturesSet = unique(uniqueCapsPair)';                   % Unique list of curvatures as a row vector
+    
+    %% ── Progress‑bar setup ────────────────────────────────────────────────
+    numPairs = size(uniqueCapsPair,1);     % how many pairs will be processed
+    % 1) kill any bar from a previous run
+    oldBar = findall(0,'Type','figure','Tag','JcapProgressBar');
+    if ~isempty(oldBar),  delete(oldBar);  end
+    
+    % 2) create a fresh one (tagged)
+    wb = waitbar(0, ...
+        sprintf('0 / %d Jcap pairs processed', numPairs), ...
+        'Name','Post-processing progress', ...
+        'Tag','JcapProgressBar', ...
+        'CreateCancelBtn','delete(gcbf)');   % 3) instant close on Cancel
+    drawnow;
+
+    %% Initialize figure counter for possible multiple runs (here set to 1 iteration)
+figureCounter = 0;
+for n1 = 1:size(uniqueCapsPair,1)
+    
+        currentPair = uniqueCapsPair(n1,:);
+    
+        % --- update / cancel check -------------------------------------------
+        if getappdata(wb,'canceling');  break;  end              % user clicked X
+        waitbar(n1/numPairs, wb, ...
+            sprintf('%d / %d  |  current pair  [%.4f  %.4f]', ...
+                    n1, numPairs, currentPair(1), currentPair(2)));
+        % ----------------------------------------------------------------------
+    
+        isCurrentPair = ismember(curvatureCapPair, currentPair, 'rows');
+    
+        localTable        = familiesTable(isCurrentPair,:);
+    
+       isCurrentPair = ismember(curvatureCapPair, currentPair, 'rows');
+localTable    = familiesTable(isCurrentPair,:);
+
+
+
+    ind = true(size(localTable.PSI_honey));
+
+
+    dimensionlessEnergy = localTable.plane_bending_energy(ind);
+    fractionOfFirstCap = localTable.PSI_honey(ind);
+    dimensionlessMembraneArea = localTable.PHI(ind);
+    averageCurvature = localTable.Avg_curv(ind);
+    area_ratio = localTable.area_ratio(ind);
+    average_arc      = localTable.avgArc(ind);
+    min_arc          = localTable.minArc(ind);
+    number_of_proteins = localTable.RATIO;
+
+    tmpStruct = data_fitting(averageCurvature, dimensionlessMembraneArea, fractionOfFirstCap, ...
+                    dimensionlessEnergy,area_ratio, currentPair, plots, number_of_proteins, ...
+                    average_arc, min_arc, N_neigh);
+
+    % (optional) align fields in case tmpStruct is missing any
+    % tmpStruct = align_fields(tmpStruct, tmpl);
+    % 
+    % % <<< ADD THIS BLOCK BEFORE APPEND >>>
+    % for k = 1:numel(tmpStruct)
+    %     tmpStruct(k).tuple4      = currentTuple;       % numeric 1x4
+    %     tmpStruct(k).tuple4_cell = {currentTuple};     % (optional) as cell
+    % end
+    
+postProcessingStruct = [postProcessingStruct; tmpStruct(:)];
+
+end
+
+    
+if ~isempty(wb) && isvalid(wb)
+    close(wb);
+end
+    
+    % Specify your path (for example):
+    savePath = save_Fig_Folder_path;  % Replace with your desired folder
+    
+    if ~exist(savePath, 'dir')
+        mkdir(savePath);
+    end
+    save(fullfile(savePath, 'postProcessingStruct_Intrinsic.mat'), 'postProcessingStruct');
+
+
+
+%%
+close all
+postStructmat_path = 'C:\my_output_directory\post thesis exam\\half_triangle_config\';  % <-- Your custom folder path
+save_Fig_Folder_path = 'C:\my_output_directory\post thesis exam\\half_triangle_config\my_post_proc_figures\';  % <-- Your custom folder path
+structPath = save_Fig_Folder_path;  % Replace with your desired folder
+
+save_post_struct_path = fullfile(structPath, 'postProcessingStruct_Intrinsic.mat');
+
+load(save_post_struct_path);  % this loads resultTable
+
+printMaxVariability(postProcessingStruct);
+printMeanVariability(postProcessingStruct);
+
+plotFinalScatter(save_post_struct_path, save_Fig_Folder_path);
+
+
+end
+
+function [redIdx, blueIdx] = red_blue_indices(current_num_proteins)
+% Indices now refer to the 4-length curvRow = [A, C, D, E] -> [1, 2, 3, 4]
+
+    switch current_num_proteins
+        case 0
+            % all red: A,C,D,E
+            redIdx  = [1 2 3 4 5];
+            blueIdx = [];
+
+        case 106
+            % A blue; C,D,E red
+            redIdx  = [2 3 4 5];   % C,D,E
+            blueIdx = [1];       % A
+
+        case 10
+            % C blue; A,D,E red
+            redIdx  = [1 3 4 5];   % A,D,E
+            blueIdx = [2];       % C (was 3 before squash)
+
+        case 204
+            % D blue; A,C,E red
+            redIdx  = [1 3 4];   % A,C,E
+            blueIdx = [2 5];       % D (was 4 before squash)
+
+        case 42
+            % C,E blue; A,D red
+            redIdx  = [1 2 5];     % A,D
+            blueIdx = [3 4];     % C,D
+
+        otherwise
+            redIdx  = [];
+            blueIdx = [];
+    end
+end
+
+
+
+function c = choose_group_curv(vals, pairRow, tol)
+% Decide which of the two tuple-curvatures a group carries.
+% If the group contains both values, pick the one that appears most (mode).
+    if isempty(vals), c = NaN; return; end
+    % snap each value to nearest of the pair
+    [~, which] = min([abs(vals - pairRow(1))', abs(vals - pairRow(2))'], [], 2);
+    k = mode(which);                     % 1 -> lower, 2 -> higher
+    c = pairRow(k);
+end
+
+
+function S = align_fields(S, template)
+    fnT = fieldnames(template);
+    for i = 1:numel(S)
+        % add missing fields
+        for j = 1:numel(fnT)
+            f = fnT{j};
+            if ~isfield(S(i), f), S(i).(f) = []; end
+        end
+        % remove unexpected fields (optional)
+        extra = setdiff(fieldnames(S(i)), fnT);
+        if ~isempty(extra), S(i) = rmfield(S(i), extra); end
+        % order to match template
+        S(i) = orderfields(S(i), template);
+    end
+end
+
+
+function postProcessingStruct = data_fitting( ...
+        averageCurvature, dimensionlessMembraneArea, fractionOfFirstCap, ...
+        dimensionlessEnergy, area_ratio, currentPair, plots, proteinNumbers, average_arc, min_arc, N_neigh)
+% data_fitting  –  fit energy-vs-curvature slices inside adaptive ψ/φ clusters
+%
+% INPUTS  (same as before)
+% OUTPUT  postProcessingStruct  (same fields as before)
+%
+
+%% ── parameters you may tweak ────────────────────────────────────────────
+minPoints  = 5;          % need at least this many pts to attempt a fit
+r2Thresh   = 0.95;       % adj-R² threshold for accepting a parabola
+
+% ---------- adaptive ψ grouping -----------------------------------------
+if currentPair(1) == currentPair(2)                      % symmetric caps
+    % group by protein number
+    [sliceKeys,~,psiLabels] = unique( proteinNumbers(:) );
+    nPsi       = numel(sliceKeys);
+    psiCenters = ones(nPsi,1);                           % ψ stored = 1
+    sliceTitle = @(idx) sprintf('proteins = %d', sliceKeys(idx));
+
+    zPlot = @(mask) proteinNumbers(mask);                % Z = protein count
+
+    psiRaw = fractionOfFirstCap(:);          % make psiRaw available
+
+else                                    % ── asymmetric caps ─────────────
+    % 1) one ψ‑slice per protein
+    [sliceKeys,~,psiLabels] = unique( proteinNumbers(:) );
+    nPsi = numel(sliceKeys);
+
+    % 2) keep two vectors:
+    psiRaw  = fractionOfFirstCap(:);    % untouched originals (for variability)
+    psiFlat = psiRaw;                   % will hold slice‑means (for everything else)
+
+    % 3) compute means + build flat vector + store psiCenters
+    psiCenters = zeros(nPsi,1);         % pre‑allocate
+    for k = 1:nPsi
+        idxK            = (psiLabels == k);
+        muPsi           = mean( psiRaw(idxK), 'omitnan' );
+        psiCenters(k)   = muPsi;
+        psiFlat(idxK)   = muPsi;        % overwrite rows of this protein
+    end
+
+    % 4) helper handles / colouring use the flat copy
+    sliceTitle = @(idx) sprintf('prot %d: mean\\psi=%.4f', ...
+                                sliceKeys(idx), psiCenters(idx));
+    zPlot      = @(mask) psiFlat(mask);
+end
+
+% ---------- graphics for raw / binned (optional) ------------------------
+if plots
+    % RAW data figure ----------------------------------------------------
+    figRaw = figure(101);  clf(figRaw);   % create / clear figure
+    axRaw  = axes(figRaw);               % make an axes inside that figure
+    set(axRaw,   'FontSize',16);  axRaw.TickLabelInterpreter   = 'latex';
+    scatter3( axRaw, ...
+             averageCurvature, ...
+             dimensionlessMembraneArea, ...
+             zPlot(true(size(averageCurvature))), ...
+             25, dimensionlessEnergy,'filled');
+            xlabel(axRaw,'$J\left[\frac{1}{nm}\right]$','Interpreter','latex', ...
+                'Color',[1 0 0],'FontSize',40,'FontWeight','bold');
+            
+            ylabel(axRaw,'$\Phi$','Interpreter','latex', ...
+                'Color',[1 0 0],'FontSize',40,'FontWeight','bold');
+            
+            if currentPair(1)==currentPair(2)
+                % plain text is fine here; no LaTeX needed
+                zlabel(axRaw,'protein count','Interpreter','none', ...
+                    'Color',[1 0 0],'FontSize',40,'FontWeight','bold');
+            else
+                zlabel(axRaw,'$\Psi$','Interpreter','latex', ...
+                    'Color',[1 0 0],'FontSize',40,'FontWeight','bold');
+            end
+
+    grid(axRaw,'on');  view(axRaw,3);
+    title(axRaw, ...
+        sprintf('\\color{red}\\fontsize{40}\\bfRaw Data for Jcap = [%.4f, %.4f]', ...
+        currentPair(1), currentPair(2)), ...
+        'Interpreter', 'tex');
+
+        % ── 2. UNFLATTENED overview (new) ───────────────────────────────────
+    figRawUnflat = figure(110);  clf(figRawUnflat);
+    axUnflat     = axes(figRawUnflat);
+    scatter3(axUnflat, ...
+        averageCurvature, ...
+        dimensionlessMembraneArea, ...
+        fractionOfFirstCap(:), ...              % *** raw ψ values ***
+        25, dimensionlessEnergy,'filled');
+
+    xlabel(axUnflat,'j');  ylabel(axUnflat,'\phi');
+    zlabel(axUnflat,'\psi (raw)');
+    grid(axUnflat,'on');  view(axUnflat,3);
+    title(axUnflat, sprintf('Raw Data (unflattened ψ)  Jcap = [%.4f, %.4f]', ...
+                            currentPair(1), currentPair(2)));
+end
+
+% ---------- initialise output struct ------------------------------------
+postProcessingStruct = struct( ...
+    'Jcap',         currentPair, ...
+    'phi',          [], ...
+    'psi',          [], ...
+    'Jintrin',      [], ...
+    'keff',         [], ...
+    'Fmin',         [], ...
+    'area_ratio',   [], ...
+    'thePair',      [], ...
+    'Variability_Mean',  [], ...
+    'Variability_Median',  [], ...
+    'Average_Arc',  [], ...
+    'Min_Arc',  [], ...
+    'kappaMicro',        [], ...
+    'microFmin',        [], ...
+    'proteinNumber',[], ...
+    'tuple4',       [], ...        % <── NEW
+    'tuple4_cell',  {{}} );        % <── NEW (optional)
+
+    % ================= MAIN 2-LEVEL LOOP ====================================
+    for pIdx = 1:nPsi
+    % for pIdx = 8
+        idxPsi = (psiLabels == pIdx);              % logical index for this ψ-slice
+        psiSliceVals = psiRaw(idxPsi);  % the raw ψ values for variability
+        if currentPair(1) == currentPair(2)    % symmetric case only
+            psiVals = rmmissing(fractionOfFirstCap(idxPsi));   % remove NaNs
+        
+            if isempty(psiVals)
+                uniquePsi = [];   % nothing to check in this slice
+            else
+                % exact-unique (order preserved); or use uniquetol(psiVals,1e-12)
+                uniquePsi = unique(psiVals, 'stable');
+                if numel(uniquePsi) > 1
+                    warning('ψ-slice %d mixes %d different ψ values!', pIdx, numel(uniquePsi));
+                end
+            end
+        end
+        pnSlice = mode( proteinNumbers(idxPsi) );
+        if currentPair(1) ~= currentPair(2)    % asymmetric case only
+            muPsi             = mean( psiRaw(idxPsi), 'omitnan' );
+            psiCenters(pIdx)  = muPsi;         % representative
+            psiFlat(idxPsi)   = muPsi;         % flatten for later use
+        end
+        psiVal = psiCenters(pIdx);
+        % ===== variability (use RAW) =======================================
+        psiSliceVals = psiSliceVals(~isnan(psiSliceVals));   % strip NaNs first
+        if numel(psiSliceVals) < 1
+            warning('ψ‑slice %d has fewer than two valid points –­ skipping', pIdx);
+            continue
+        end
+        width   = max(psiSliceVals) - min(psiSliceVals);
+        meanPsi = mean(psiSliceVals,'omitnan');
+        medPsi  = median(psiSliceVals,'omitnan');
+        
+        varMeanPct = (width / meanPsi) * 100;
+        varMedPct  = (width / medPsi ) * 100;
+        
+        fprintf('psi-slice #%d  (mean=%.8f, median=%.8f)  ', pIdx, meanPsi, medPsi);
+        fprintf('variability: mean-ref = %.3g%%   |   median-ref = %.3g%%\n', ...
+                varMeanPct, varMedPct);
+        delta = abs(meanPsi - medPsi);
+        fprintf('mean–median difference = %.4g\n', delta);
+    
+    % ───────────────────────────────── slice viewer ─────────────────────────
+    
+        % ------ raw slice data ---------------------------------------------
+        jSlice   = averageCurvature(idxPsi);
+        phiSlice = dimensionlessMembraneArea(idxPsi);
+        fSlice   = dimensionlessEnergy(idxPsi);
+        avgArcSlice = average_arc(idxPsi);    % weighted average arc (raw data)
+        minArcSlice = min_arc(idxPsi);        % min(arc_CA, arc_BmidC)
+
+        areaRatioSlice = area_ratio(idxPsi);
+    
+        % --------- NEW: remove rows containing NaNs -----------------------------
+        nanMask  = isnan(jSlice) | isnan(phiSlice) | isnan(fSlice) ...
+                         | isnan(avgArcSlice) | isnan(minArcSlice) | isnan(areaRatioSlice);   % NEW
+        jSlice   = jSlice(~nanMask);
+        phiSlice = phiSlice(~nanMask);
+        fSlice   = fSlice(~nanMask);
+        avgArcSlice = avgArcSlice(~nanMask);   % NEW – keep arc rows in sync
+        minArcSlice = minArcSlice(~nanMask);   % NEW
+        areaRatioSlice = areaRatioSlice(~nanMask);
+
+        % [phiUnique,   iu] = unique( phiSlice(:) );          % column vectors
+        % avgUnique         = avgArcSlice(iu);
+        % minUnique         = minArcSlice(iu);
+        
+        if numel(jSlice) < minPoints          % nothing left to fit – skip slice
+            continue
+        end
+        
+        % ------ LOESS surface fit ----------------------------------------------
+        spanVal = 0.50;
+        loSurf  = fit([jSlice, phiSlice], fSlice, 'loess', 'Span', spanVal);
+        % (fallback: see bottom)
+
+        % ------ LOESS surface fit (area_ratio) ------------------------------  % NEW
+        % (use same span; drop only those rows where areaRatioSlice is NaN/Inf)
+        maskA   = isfinite(areaRatioSlice);
+        loArea  = [];  % handle missing data gracefully
+        if nnz(maskA) >= minPoints
+            loArea = fit([jSlice(maskA), phiSlice(maskA)], areaRatioSlice(maskA), ...
+                         'loess', 'Span', spanVal);
+        end
+    
+        % ------ grid for visualising the surface ---------------------------
+        jGrid   = linspace( min(jSlice),  max(jSlice), 100 );
+        phiGrid = linspace( min(phiSlice), max(phiSlice), 100 );
+        [Jg, Pg] = meshgrid(jGrid, phiGrid);
+        Fg       = loSurf( [Jg(:), Pg(:)] );
+        Fg       = reshape(Fg, size(Jg));
+        % --- clip extrapolated regions -----------------------------------------
+        k       = boundary(jSlice, phiSlice, 0.1);           % 0.1 → tight outline
+        inside  = inpolygon(Jg(:), Pg(:), jSlice(k), phiSlice(k));
+        Fg(~reshape(inside, size(Jg))) = NaN;                % NaN = don’t plot
+    
+        if plots
+            figure(200); clf; hold on
+        
+            % Surface first  (semi‑transparent so points remain visible)
+            surf(Jg, Pg, Fg, ...
+                 'EdgeColor','none', ...
+                 'FaceAlpha', 0.55);            % transparency
+            colormap(parula); colorbar
+        
+            % Raw points on top
+            scatter3(jSlice, phiSlice, fSlice, ...
+                     35, fSlice, 'filled', ...
+                     'MarkerEdgeColor','k', 'LineWidth',0.25);
+        
+            title(sprintf('\\color{red}\\fontsize{18}\\bf Slice %s  (pIdx=%d)', ...
+                          sliceTitle(pIdx), pIdx), ...
+                  'Interpreter', 'tex');
+
+        ax = gca;  % or ax = axRaw / ax200 – the axes you want to label
+        
+        xlabel(ax,'$J\left[\frac{1}{nm}\right]$','Interpreter','latex','Color',[1 0 0],'FontSize',40,'FontWeight','bold');
+        ylabel(ax,'$\Phi$','Interpreter','latex','Color',[1 0 0],'FontSize',40,'FontWeight','bold');  % <- Phi
+        zlabel(ax,'$f\left[\frac{k_{\mathrm{B}}T}{\mathrm{nm}^{2}}\right]$','Interpreter','latex','Color',[1 0 0],'FontSize',40,'FontWeight','bold');
+
+
+            grid on;  view(3);
+        end
+    
+        % === NEW: generate 50 synthetic φ values from the LOESS surface =========
+        phiMin = min(phiSlice);
+        phiMax = max(phiSlice);
+        avgArc_min = min(avgArcSlice);   % NEW – keep arc rows in sync
+        minArc_min = min(minArcSlice);   % NEW
+        avgArc_max = max(avgArcSlice);   % NEW – keep arc rows in sync
+        minArc_max = max(minArcSlice);   % NEW
+        phiCenters = linspace(phiMin, phiMax, 50);   % exactly 50 points
+        avgArcCenters = linspace(avgArc_min, avgArc_max, 50);   % exactly 50 points
+        minArcCenters = linspace(minArc_min, minArc_max, 50);   % exactly 50 points
+        nPhi = numel(phiCenters);
+        avgArcCenters = fliplr(avgArcCenters);                  % <─ flip to low→high
+        minArcCenters = fliplr(minArcCenters);                  % <─ flip to low→high
+        
+        % keep protein number once per ψ‑slice
+        pn = unique(proteinNumbers(idxPsi));
+        if numel(pn) ~= 1
+            warning('ψ‑slice has multiple protein counts; taking first value');
+            pn = pn(1);
+        end
+    
+        for qIdx = 1:nPhi
+            avgArcVal = avgArcCenters(qIdx);
+            minArcVal = minArcCenters(qIdx);
+            phiVal = phiCenters(qIdx);            % current φ on the regular grid
+        
+            % --- evaluate LOESS slice: F(j | φ = phiVal) -----------------------
+            jVals = jGrid;                         % j‑grid already built earlier
+            fVals = loSurf([ jVals(:), phiVal*ones(numel(jVals),1 ) ]);
+            % ----- clip synthetic slice to data domain (no extrapolation) -----
+            onRow  = inpolygon(jVals(:), phiVal*ones(numel(jVals),1), ...
+                               jSlice(k), phiSlice(k));   % same boundary 'k'
+            jVals  = jVals(onRow);
+            fVals  = fVals(onRow);
+            if numel(jVals) < minPoints,  continue;  end
+            
+            % skip if the LOESS surface returned all NaNs at this φ
+            if all(isnan(fVals)),  continue;  end
+        
+            % synthetic “raw” arrays for plotting
+            phiRaw = phiVal * ones(size(jVals));
+            jVals  = jVals(:);                     % ensure column
+            fVals  = fVals(:);
+        
+            % ======================= PLOTTING (optional) =======================
+            if plots
+                % -------- highlight in RAW overview (figure 101) -------------------
+                if exist('axRaw','var') && isvalid(axRaw)
+                    hold(axRaw,'on');
+            
+                    % --- choose correct height for the red points ------------------
+                    if currentPair(1)==currentPair(2)          % symmetric → protein count
+                        zHi = pnSlice * ones(size(jVals));
+                    else                                      % asymmetric → ψ value
+                        zHi = psiVal  * ones(size(jVals));
+                    end
+            
+                    scatter3(axRaw, jVals, phiRaw, zHi, 70, 'r', 'filled');
+                end
+            
+                % -------- highlight in slice viewer (figure 200) -------------------
+                figure(200);
+            
+                if currentPair(1)==currentPair(2)
+                    zHi = pnSlice * ones(size(jVals));
+                else
+                    zHi = psiVal  * ones(size(jVals));
+                end
+            
+                scatter3(jVals, phiRaw, fVals, 70, 'r', 'filled');
+                drawnow;
+            end
+            
+            % ----- fit parabola with existing helper --------------------------
+            [succ, pCoeffs, pStats, jRoot, fMin] = ...
+                fallback_fit_and_plot(jVals, fVals, phiVal, psiVal, ...
+                                      currentPair, r2Thresh, minPoints, plots);
+            [kappa_micro, fmin_micro] = microKappaNeighbourFitPlot(jVals, fVals, jRoot, fMin, pCoeffs, psiVal, phiVal, N_neigh, plots);
+        
+            % ----- store results if fit OK ------------------------------------
+            if succ
+                    % value of area_ratio at the SAME point (jRoot, phiVal)
+                ar_at_min = NaN;                                       % NEW
+                if ~isempty(loArea)
+                    try
+                        ar_at_min = loArea([jRoot, phiVal]);           % NEW: interpolate area_ratio
+                    catch
+                        ar_at_min = NaN;
+                    end
+                end
+                if ~isfinite(ar_at_min)
+                    % fallback: nearest raw point in (j,phi)
+                    d = hypot(jSlice - jRoot, phiSlice - phiVal);      % NEW
+                    [~,ii] = min(d);
+                    ar_at_min = areaRatioSlice(ii);
+                end
+                postProcessingStruct.phi          = [postProcessingStruct.phi,  phiVal];
+                postProcessingStruct.psi          = [postProcessingStruct.psi,  psiVal];
+                postProcessingStruct.Average_Arc = [postProcessingStruct.Average_Arc, avgArcVal];
+                postProcessingStruct.Min_Arc     = [postProcessingStruct.Min_Arc,     minArcVal];
+                postProcessingStruct.Jintrin      = [postProcessingStruct.Jintrin, jRoot];
+                % postProcessingStruct.keff         =
+                % [postProcessingStruct.keff, 2*pCoeffs(1)]; real full data
+                % Keff values
+                % postProcessingStruct.Fmin         =
+                % [postProcessingStruct.Fmin, fMin]; real full data
+                % Fmin values
+                postProcessingStruct.keff         = [postProcessingStruct.keff, kappa_micro];
+                postProcessingStruct.Fmin         = [postProcessingStruct.Fmin, fmin_micro];
+                % postProcessingStruct.kappaMicro = [postProcessingStruct.kappaMicro, kappa_micro];
+                % postProcessingStruct.microFmin = [postProcessingStruct.microFmin, fmin_micro];
+                    if ~isfield(postProcessingStruct,'area_ratio_at_Fmin')          % NEW
+                        postProcessingStruct.area_ratio_at_Fmin = [];               % NEW
+                    end                                                             % NEW
+                    postProcessingStruct.area_ratio_at_Fmin = [postProcessingStruct.area_ratio_at_Fmin, ar_at_min];
+                postProcessingStruct.thePair      = [postProcessingStruct.thePair; currentPair];
+                postProcessingStruct.Variability_Mean   = [postProcessingStruct.Variability_Mean; varMeanPct];
+                postProcessingStruct.Variability_Median = [postProcessingStruct.Variability_Median; varMedPct];
+                postProcessingStruct.proteinNumber      = [postProcessingStruct.proteinNumber, pn];
+        
+                fprintf(['✔  Jcap=[%.4f %.4f]  |  psi=%.4f  phi=%.4f  |  ', ...
+                         'Jint=%.3g  keff=%.3g  kappa_micro=%.3g  Fmin=%.3g  ', ...
+                         'MinArc=%.3g  AvgArc=%.3g  area_ratio@Fmin=%.3g  |  proteins=%d\n'], ...
+                        currentPair(1), currentPair(2), ...
+                        psiVal, phiVal, jRoot, 2*pCoeffs(1), kappa_micro, fMin, ...
+                        minArcVal, avgArcVal, ar_at_min, pn);
+            else
+                fprintf(['X  Jcap=[%.4f %.4f]  |  psi=%.4f  phi=%.4f fit not found\n'], ...
+                        currentPair(1), currentPair(2), psiVal, phiVal);
+            end
+        end % end PHI loop
+    end % end PSI loop
+end % end function
+
+function [kappa_micro, fmin_micro] = microKappaNeighbourFitPlot(jVals, fVals, jRoot, fMin, pCoeffs, psiVal, phiVal, N_neigh, plots)
+% Return micro-KAPPA from N neighbours/side around jRoot and (optionally) plot Fig 104.
+% Correction for negative Fmin uses ONLY the fitted parabola:
+%   take the two closest j's left/right of Jint where the fitted value >= 0,
+%   and set Fmin to the mean of those two fitted values (no clamping).
+
+    j = jVals(:);  f = fVals(:);
+    [jSorted, ord] = sort(j);
+    fSorted = f(ord);
+
+    left  = find(jSorted < jRoot);
+    right = find(jSorted > jRoot);
+
+    leftPick  = [];
+    rightPick = [];
+    if ~isempty(left)
+        leftPick  = left(max(1, numel(left)-N_neigh+1):numel(left));
+    end
+    if ~isempty(right)
+        rightPick = right(1:min(N_neigh, numel(right)));
+    end
+    pick = [leftPick(:); rightPick(:)];
+
+    if numel(pick) < 3
+        kappa_micro = NaN;  fmin_micro = NaN;  return;
+    end
+
+    jSub = jSorted(pick);
+    fSub = fSorted(pick);
+
+    % Quadratic fit to the subset
+    p2 = polyfit(jSub, fSub, 2);
+    if p2(1) <= 0
+        kappa_micro = NaN;  fmin_micro = NaN;  return;
+    end
+
+    % Minimum of the fitted parabola
+    j0          = -p2(2)/(2*p2(1));
+    f0          = polyval(p2, j0);
+    kappa_micro = 2*p2(1);
+    fmin_micro  = f0;
+
+    % ---- CORRECTION using only the fitted curve (no raw points) ----------
+    % Build a dense grid over the subset span
+    jLo = min(jSub);  jHi = max(jSub);
+    nFine = 4001;                            % dense enough
+    jFine = linspace(jLo, jHi, nFine);
+    fFit  = polyval(p2, jFine);
+
+    % tolerance for "non-negative"
+    tol = 0;  % keep exactly >=0 as you requested
+
+    if f0 < tol
+        % Left neighbour on the fit: closest j < j0 with fFit >= tol
+        leftMask  = (jFine < j0) & (fFit >= tol);
+        rightMask = (jFine > j0) & (fFit >= tol);
+
+        if any(leftMask),  jL = jFine(find(leftMask, 1, 'last'));  else, jL = NaN; end
+        if any(rightMask), jR = jFine(find(rightMask,1,'first')); else, jR = NaN; end
+
+        if isfinite(jL) && isfinite(jR)
+            fL = polyval(p2, jL);
+            fR = polyval(p2, jR);
+            fmin_micro = 0.5*(fL + fR);     % average of the two FIT values
+            usedFitNbrs = true;
+        else
+            % No non-negative neighbours on either side in the fit domain
+            fmin_micro = NaN;
+            usedFitNbrs = false;
+        end
+    else
+        usedFitNbrs = false;
+        jL = NaN; jR = NaN;
+    end
+    % ---------------------------------------------------------------------
+
+    if plots
+        figure(104); clf; hold on;
+
+        % subset points
+        hSub  = plot(jSub, fSub, 'o', 'MarkerSize', 6, ...
+                     'DisplayName', sprintf('subset (%d/side)', N_neigh));
+        % fitted curve
+        hFit  = plot(jFine, fFit, '--', 'LineWidth', 1.5, ...
+                     'DisplayName', 'Final Poly2 Fit');
+
+        % markers for the two fit neighbours we actually used
+        if usedFitNbrs
+            plot([jL jR], polyval(p2,[jL jR]), 'ro', ...
+                 'Color',[0.2 0.5 1], 'MarkerFaceColor','w', ...
+                 'DisplayName','fit neighbours');
+        end
+
+        % black triangle at Jint with the corrected Fmin value
+        hMic  = plot(j0, fmin_micro, 'kv', 'MarkerFaceColor','k', ...
+                     'DisplayName', sprintf('F_{min} = %.3g', fmin_micro));
+
+        % reference full-slice minimum
+        hFull = plot(jRoot,fMin, 'r^', 'MarkerFaceColor','r', 'DisplayName','full-slice min');
+
+        xlabel('$J\left[\frac{1}{nm}\right]$', ...
+       'Interpreter','latex', ...
+       'FontSize',40, ...
+       'Color','red', ...
+       'FontWeight','bold');
+        ylabel('$f\left[\frac{k_{\mathrm{B}}T}{\mathrm{nm}^{2}}\right]$', ...
+           'Interpreter','latex', ...
+           'FontSize',40, ...
+           'Color','red', ...
+           'FontWeight','bold');
+        kappa_reg = 2*pCoeffs(1);
+        title(sprintf('Micro fit  \\psi=%.4f, \\phi=%.4f  |  \\kappa=%.4f, \\kappa_\\mu=%.4f', ...
+                      psiVal ,phiVal, kappa_reg, kappa_micro));
+
+        % extra legend rows (phi/psi/N and Jint)
+        hInfo = plot(nan,nan,'w', 'DisplayName', ...
+            sprintf('\\phi = %.5f,  \\psi = %.4f,  N = %d', phiVal,psiVal, numel(jSub)));
+        hJint = plot(nan,nan,'LineStyle','none','Marker','none', ...
+                     'DisplayName', sprintf('J_{int} = %.6g', j0));
+
+
+        % leg = legend([hInfo hSub hFit hJint hMic hFull], 'Location','best', 'Interpreter','tex');
+
+        hNbr = gobjects(1);  % predeclare
+        
+        if usedFitNbrs
+            plot([jL jR], polyval(p2,[jL jR]), 'bo', ...
+                 'MarkerSize',8, 'LineWidth',1.2, ...
+                 'MarkerFaceColor','r', ...
+                 'DisplayName','fit neighbours');
+        end
+        
+        hList = [hInfo hSub hFit hJint hMic hFull];
+        if usedFitNbrs
+            hList = [hInfo hSub hFit hJint hMic hFull];
+        end
+        
+        leg = legend(hList,'Location','best','Interpreter','tex');
+        set(leg,'AutoUpdate','off');
+
+        set(leg,'AutoUpdate','off');
+
+        grid on; hold off; drawnow;
+    end
+end
+
+
+
+
+
+function [success, polyCoeffs, polyStats, jRoot, fMin_final] = ...
+    fallback_fit_and_plot(jVals, fVals, phiVal, psiVal, curvPair, ...
+                          r2Threshold, minPoints, plots)
+% fallback_fit_and_plot
+% - Attempts poly2 fit to j-f data.
+% - Plots all fitting attempts on the same figure.
+% - Uses drawnow to update visuals without creating new figures.
+
+    % Initialize outputs
+    success       = false;
+    polyCoeffs    = [];
+    polyStats     = struct('adjrsquare', NaN);
+    jRoot         = NaN;
+    fMin_final    = NaN;
+    % Initialize handles for raw data and final fit so they persist between iterations.
+    hRaw = [];   
+    hFinal = [];
+
+    % Sort data
+    [jVals, idx] = sort(jVals(:));
+    fVals = fVals(idx);
+
+    % Plot warning if any fVals < 0
+    if any(fVals < 0)
+        fprintf('\nWARNING: Some interpolated fVals are negative!\n');
+        % disp(fVals);
+    end
+
+    if (plots)
+    
+    figfit = figure(103);
+    clf(figfit);  % Clear figure 103 once at the start
+    hold on;
+    
+    % Raw trace (make legend text LaTeX-safe too)
+    hRaw = plot(jVals, fVals, 'o-', 'LineWidth', 1.2, ...
+        'DisplayName', sprintf('$\\phi=%.3g,\\ \\psi=%.3g,\\ N=%d$', ...
+                               phiVal, psiVal, numel(jVals)));
+    
+    axFit = gca;   % axes of figure 103
+    set(axFit,'FontSize',18);     % tick numbers on both axes
+    
+    xlabel(axFit,'$J\left[\frac{1}{nm}\right]$','Interpreter','latex', ...
+        'Color',[1 0 0],'FontSize',30,'FontWeight','bold');
+    ylabel(axFit,'$f\left[\frac{k_{\mathrm{B}}T}{\mathrm{nm}^{2}}\right]$','Interpreter','latex', ...
+        'Color',[1 0 0],'FontSize',30,'FontWeight','bold');
+    
+    title(axFit, '\color{red}Energy vs Curvature', ...
+        'FontSize',22,'FontWeight','bold','Interpreter','tex','Color',[1 0 0]);
+    
+    subtitle(axFit, sprintf('\\color{red}CurvPair = [%.4g, %.4g]', ...
+            curvPair(1), curvPair(2)), ...
+        'FontSize',16,'Interpreter','tex','Color',[1 0 0]);
+    
+    legend(axFit,'Location','northeastoutside','Interpreter','latex');
+    set(axFit,'TickLabelInterpreter','latex');   % optional, for axis ticks
+    grid(axFit,'on');
+    drawnow;
+
+    end
+
+
+    % Loop until fit succeeds or data is exhausted
+    while ~success && numel(jVals) >= minPoints
+        
+        if plots
+            figure(103);
+            axFit = gca;
+        
+            set(hRaw,'XData',jVals,'YData',fVals, ...
+                'DisplayName', sprintf('$\\phi=%.3g,\\ \\psi=%.3g,\\ N=%d$', ...
+                                       phiVal, psiVal, numel(jVals)));
+        
+            legend(axFit,'Location','northeastoutside','Interpreter','latex');  % shows φ, ψ
+            drawnow;
+        end
+
+
+        try
+            [polyModel, gof] = fit(jVals(:), fVals(:), 'poly2');
+            p = [polyModel.p1, polyModel.p2, polyModel.p3];
+            polyStats = gof;
+
+            % Derivative => root(s)
+            polyD = polyder(p);
+            rootsAll = roots(polyD);
+            rootsReal = rootsAll(imag(rootsAll) == 0);
+
+            if numel(rootsReal) == 1
+                jCandidate = rootsReal;
+
+                fCandidate = polyval(p, jCandidate);
+
+                jCandidate = rootsReal;
+                fCandidate = polyval(p, jCandidate);
+                
+                % Guard: reject if Jint is below the smallest data point
+                if ((jCandidate < min(jVals)) || (jCandidate > max(jVals)))
+                    disp('Jint above/below data points -> retrying...');
+                    % do NOT accept; let the loop drop a point at the end and retry
+                    success    = false;
+                    polyCoeffs = [];
+                    jRoot      = NaN;
+                    fMin_final = NaN;
+                else
+                    if p(1) > 0 && gof.adjrsquare > r2Threshold
+                        fCorrected = correct_negative_fmin(fCandidate, jVals, fVals, jCandidate, plots);
+                
+if plots
+    figfit = figure(103);
+    axfit  = gca;  hold(axfit,'on');
+
+    jFine = linspace(min(jVals), max(jVals), 200);
+
+    % dashed fit (sample will appear next to this text)
+    plot(axfit, jFine, polyval(p,jFine), 'k--', ...
+        'LineWidth', 1.5, ...
+        'DisplayName','Final Poly2 Fit');
+
+    % >>> the red minimum point — this handle supplies the legend sample
+    hFmin = plot(axfit, jCandidate, fCorrected, 'o', ...
+        'MarkerSize', 9, 'MarkerFaceColor','r', 'MarkerEdgeColor','k', ...
+        'LineStyle','none', ...
+        'DisplayName', sprintf('$F_{\\min}=%.2g$', fCorrected));
+
+    % (optional) also show J_int as a text-only legend row
+    plot(axfit, NaN, NaN, 'LineStyle','none', ...
+        'DisplayName', sprintf('$J_{\\mathrm{int}}=%.3g$', jCandidate));
+
+    legend(axfit,'Location','northeastoutside','Interpreter','latex','FontSize',16);
+    drawnow;
+end
+
+
+                
+                        % Store results
+                        success    = true;
+                        polyCoeffs = p;
+                        jRoot      = jCandidate;
+                        fMin_final = fCorrected;
+                        return;
+                    else
+                        disp('Fit conditions not met => retrying...');
+                        success    = false;
+                        polyCoeffs = NaN;
+                        jRoot      = NaN;
+                        fMin_final = NaN;
+                        return;
+                    end
+                end
+
+            else
+                disp('Multiple or no real roots => retrying...');
+            end
+
+        catch ME
+            fprintf('Fit error: %s\nRetrying...\n', ME.message);
+        end
+
+        % Remove top point
+        jVals(end) = [];
+        fVals(end) = [];
+    end
+
+    disp('❌ No valid parabola fit found.');
+end
+
+function fmin_corrected = correct_negative_fmin(fmin_fit, jRange, energyVals, jStar, plots)
+%CORRECT_NEGATIVE_FMIN  Fix a negative Fmin coming from a polynomial fit.
+%
+% Strategy
+% --------
+%  • If fmin_fit ≥ 0              → keep it.
+%  • Else:
+%       1. Locate the nearest sample to jStar  (idx).
+%       2. Walk left and right until the *first* positive energy
+%          values (fL, fR) are found.
+%       3. If either side is missing            → return NaN (invalid).
+%       4. Otherwise                            → average(fL, fR).
+%
+% INPUTS
+%   fmin_fit   Raw (possibly negative) Fmin from the polynomial fit        (scalar)
+%   jRange     Vector of sampled curvature values                          (Nx1 or 1xN)
+%   energyVals Vector of corresponding energy values (same size as jRange) (Nx1 or 1xN)
+%   jStar      j‑value at which the polynomial minimum was found           (scalar)
+%   plots      (optional) struct / logical flag — untouched here
+%
+% OUTPUT
+%   fmin_corrected  Either:
+%                     – original fmin_fit   (if already ≥ 0)
+%                     – mean(fL, fR)        (first positives on both sides)
+%                     – NaN                 (correction impossible)
+%
+% Y. Navot · Jul‑2025
+% -------------------------------------------------------------------------
+
+    % ── 1. Early‑exit if already positive ────────────────────────────────
+    if fmin_fit >= 0
+        fmin_corrected = fmin_fit;
+        return;
+    end
+
+    % ── 2. Locate closest sampled point to the fitted root ───────────────
+    [~, idx] = min(abs(jRange - jStar));
+    nPts     = numel(energyVals);
+
+    % ── 3. Search outward (left & right) for first *positive* energies ───
+    % Left side
+    leftIdx = idx - 1;
+    while leftIdx >= 1 && energyVals(leftIdx) <= 0
+        leftIdx = leftIdx - 1;
+    end
+    % Right side
+    rightIdx = idx + 1;
+    while rightIdx <= nPts && energyVals(rightIdx) <= 0
+        rightIdx = rightIdx + 1;
+    end
+
+    % ── 4. Check if both sides found positives ───────────────────────────
+    if leftIdx < 1 || rightIdx > nPts
+        % One (or both) sides never reached a positive value ⇒ invalid fit.
+        fmin_corrected = NaN;
+        return;
+    end
+
+    % ── 5. Average the first positive neighbours ─────────────────────────
+    fL = energyVals(leftIdx);
+    fR = energyVals(rightIdx);
+    fmin_corrected = mean([fL, fR]);
+
+    % (Optional) small diagnostic plot overlay
+    if nargin >= 5 && plots
+        figure(103);
+        hold on
+        plot(jRange(idx), fmin_fit,  'kv', 'MarkerFaceColor','k', ...
+             'DisplayName','Fit minimum');
+        plot(jRange(leftIdx),  fL,   'ro', 'DisplayName','Left +ve neighbour');
+        plot(jRange(rightIdx), fR,   'ro', 'DisplayName','Right +ve neighbour');
+        legend show
+        hold off
+
+        % pause;                                       
+    end
+end
+
+function plotFinalScatter(structPath, saveFigFolder)
+
+% plotFinalScatter - Plots 3D scatter plots for J_intrin, Fmin, and k_eff.
+%
+% Inputs:
+%   postProcessingStruct - A structure array with fields:
+%            .Jcap, .phi, .psi, .Jintrin, .keff, .Fmin, etc.
+%   resolution           - A scalar used for display in the subtitle.
+%   saveFigFolder        - Folder path to save the figures.
+%
+% The function skips duplicate pairs by sorting each pair (so that [B,A]
+% is treated as the same as [A,B]) and then only plotting one entry.
+
+    data = load(structPath, 'postProcessingStruct');
+    rawStruct = data.postProcessingStruct;
+    
+    % Step 1: Normalize and group by sorted Jcap
+    groupedStruct = struct();
+    keys = {};  % keep a record of unique keys
+    
+    for i = 1:length(rawStruct)
+        thisPair = rawStruct(i).Jcap;
+        if numel(thisPair) == 1
+            thisPair = [thisPair, thisPair];
+        end
+        sortedPair = sort(thisPair);
+        key = sprintf('J_%.6f_%.6f', sortedPair(1), sortedPair(2));
+        key = strrep(key, '.', '_');  % replace '.' with '_'
+    
+        if ~isfield(groupedStruct, key)
+            % New group
+            groupedStruct.(key).Jcap = sortedPair;
+            groupedStruct.(key).phi = rawStruct(i).phi;
+            groupedStruct.(key).psi = rawStruct(i).psi;
+            groupedStruct.(key).Jintrin = rawStruct(i).Jintrin;
+            groupedStruct.(key).keff = rawStruct(i).keff;
+            groupedStruct.(key).Fmin = rawStruct(i).Fmin;
+            groupedStruct.(key).proteinNumber = rawStruct(i).proteinNumber;  
+            groupedStruct.(key).area_ratio_at_Fmin = rawStruct(i).area_ratio_at_Fmin;
+            keys{end+1} = key;
+        else
+            % Append to existing group
+            groupedStruct.(key).phi = [groupedStruct.(key).phi, rawStruct(i).phi];
+            groupedStruct.(key).psi = [groupedStruct.(key).psi, rawStruct(i).psi];
+            groupedStruct.(key).Jintrin = [groupedStruct.(key).Jintrin, rawStruct(i).Jintrin];
+            groupedStruct.(key).keff = [groupedStruct.(key).keff, rawStruct(i).keff];
+            groupedStruct.(key).Fmin = [groupedStruct.(key).Fmin, rawStruct(i).Fmin];
+            groupedStruct.(key).proteinNumber = rawStruct(i).proteinNumber;
+            groupedStruct.(key).area_ratio_at_Fmin = [groupedStruct.(key).area_ratio_at_Fmin, rawStruct(i).area_ratio_at_Fmin];
+        end
+    end
+    
+    postProcessingStruct = repmat(struct( ...
+        'Jcap', [], ...
+        'phi', [], ...
+        'psi', [], ...
+        'Jintrin', [], ...
+        'keff', [], ...
+        'Fmin', [], ...
+        'proteinNumber', [], ...
+        'area_ratio_at_Fmin', []), ...
+        1, length(keys));
+    
+    for i = 1:length(keys)
+        s = groupedStruct.(keys{i});
+        postProcessingStruct(i).Jcap    = s.Jcap;
+        postProcessingStruct(i).phi     = s.phi;
+        postProcessingStruct(i).psi     = s.psi;
+        postProcessingStruct(i).Jintrin = s.Jintrin;
+        postProcessingStruct(i).keff    = s.keff;
+        postProcessingStruct(i).Fmin    = s.Fmin;
+        postProcessingStruct(i).proteinNumber    = s.proteinNumber;
+        postProcessingStruct(i).area_ratio_at_Fmin = s.area_ratio_at_Fmin;
+    end
+    
+    %% 3D Scatter for J_intrin
+    hFigJintrin = figure('Name','JintrinPlot','Visible','on');
+    hold on;
+    cmap = lines(length(postProcessingStruct));
+    uniquePairsPlotted_Jint = zeros(0,2);  % will store each sorted pair once
+
+    for i = 1:length(postProcessingStruct)
+        thisPair = postProcessingStruct(i).Jcap;  % may be [A,B] or [B,A]
+        if numel(thisPair) == 1
+            thisPair = [thisPair, thisPair];  % duplicate to make it a 1x2 pair
+        elseif numel(thisPair) ~= 2
+            warning('Skipping malformed Jcap entry at index %d.', i);
+            continue;
+        end
+        sortedPair = sort(thisPair);  % transform it into [min(A,B), max(A,B)]
+        % Skip if this sorted pair was already plotted.
+        duplicateFound = any(ismember(uniquePairsPlotted_Jint, sortedPair, 'rows'));
+        if duplicateFound
+            continue;
+        end
+        % Otherwise, record this pair as plotted.
+        uniquePairsPlotted_Jint = [uniquePairsPlotted_Jint; sortedPair];
+
+        xdata = postProcessingStruct(i).phi;
+        ydata = postProcessingStruct(i).psi;
+        zdata = postProcessingStruct(i).Jintrin;
+
+        % Special handling: for pairs that are nearly identical, force psi to 1 or 0.
+        if abs(thisPair(1) - thisPair(2)) < 1e-12
+            if abs(thisPair(1) - 0.0010) < 1e-12
+                ydata(:) = 1; 
+            else
+                ydata(:) = 0;
+            end
+        end
+
+        % Plot the data using the sorted pair for the legend.
+        scatter3(xdata, ydata, zdata, 40, cmap(i,:), 'filled', ...
+            'DisplayName', sprintf('[%.4f, %.4f]', sortedPair(1), sortedPair(2)), ...
+            'HandleVisibility','on');
+    end
+
+    xlabel('\phi'); ylabel('\psi'); zlabel('J_{intrin}');
+    title('J_{intrin} vs \phi vs \psi for all Jcap pairs');
+    legend('Location', 'best');
+    grid on; view(3);
+    savefig(hFigJintrin, fullfile(saveFigFolder, sprintf('Jint_all_Jcap_together.fig')));
+
+
+    %% 3D Scatter for Fmin
+    hFigFmin = figure('Name','FminPlot','Visible','on');
+    hold on;
+    cmap = lines(length(postProcessingStruct));
+    uniquePairsPlotted_Fmin = zeros(0,2);
+
+    for i = 1:length(postProcessingStruct)
+        thisPair = postProcessingStruct(i).Jcap;
+        % Ensure it’s always a 1x2 vector
+        if numel(thisPair) == 1
+            thisPair = [thisPair, thisPair];
+        elseif numel(thisPair) ~= 2
+            warning('Skipping malformed Jcap entry at index %d.', i);
+            continue;
+        end
+        sortedPair = sort(thisPair);
+
+            % Safe check for duplicates
+        duplicateFound = any(ismember(uniquePairsPlotted_Fmin, sortedPair, 'rows'));
+        if duplicateFound
+            continue;
+        end
+
+        uniquePairsPlotted_Fmin = [uniquePairsPlotted_Fmin; sortedPair];
+
+        xdata = postProcessingStruct(i).phi;
+        ydata = postProcessingStruct(i).psi;
+        zdata = postProcessingStruct(i).Fmin;
+
+        if abs(thisPair(1) - thisPair(2)) < 1e-12
+            if abs(thisPair(1) - 0.0010) < 1e-12
+                ydata(:) = 1;
+            else
+                ydata(:) = 0;
+            end
+        end
+
+        scatter3(xdata, ydata, zdata, 40, cmap(i,:), 'filled', ...
+            'DisplayName', sprintf('[%.4f, %.4f]', sortedPair(1), sortedPair(2)), ...
+            'HandleVisibility','on');
+    end
+
+    xlabel('\phi'); ylabel('\psi'); zlabel('Fmin');
+    title('Fmin vs \phi vs \psi for all Jcap pairs');
+    legend('Location','best');
+    grid on; view(3);
+    savefig(hFigFmin, fullfile(saveFigFolder, sprintf('Fmin_all_Jcap_together.fig')));
+
+
+    %% 3D Scatter for k_eff
+    hFigKeff = figure('Name','keffPlot','Visible','on');
+    hold on;
+    cmap = lines(length(postProcessingStruct));
+    uniquePairsPlotted_kEff = zeros(0,2);
+
+    for i = 1:length(postProcessingStruct)
+        thisPair = postProcessingStruct(i).Jcap;
+        % Ensure it’s always a 1x2 vector
+        if numel(thisPair) == 1
+            thisPair = [thisPair, thisPair];
+        elseif numel(thisPair) ~= 2
+            warning('Skipping malformed Jcap entry at index %d.', i);
+            continue;
+        end
+
+        sortedPair = sort(thisPair);
+
+        % Safe check for duplicates
+        duplicateFound = any(ismember(uniquePairsPlotted_kEff, sortedPair, 'rows'));
+        if duplicateFound
+            continue;
+        end
+
+        uniquePairsPlotted_kEff = [uniquePairsPlotted_kEff; sortedPair];
+
+        xdata = postProcessingStruct(i).phi;
+        ydata = postProcessingStruct(i).psi;
+        zdata = postProcessingStruct(i).keff;
+
+        if abs(thisPair(1) - thisPair(2)) < 1e-12
+            if abs(thisPair(1) - 0.0010) < 1e-12
+                ydata(:) = 1;
+            else
+                ydata(:) = 0;
+            end
+        end
+
+        scatter3(xdata, ydata, zdata, 40, cmap(i,:), 'filled', ...
+            'DisplayName', sprintf('[%.4f, %.4f]', sortedPair(1), sortedPair(2)), ...
+            'HandleVisibility','on');
+    end
+
+    xlabel('\phi'); ylabel('\psi'); zlabel('k_{eff}');
+    title('k_{eff} vs \phi vs \psi for all Jcap pairs');
+    legend('Location','best');
+    grid on; view(3);
+    savefig(hFigKeff, fullfile(saveFigFolder, sprintf('Keff_all_Jcap_together.fig')));
+
+    %% 3D Scatter for area\_ratio at Fmin
+    hFigAR = figure('Name','AreaRatioAtFminPlot','Visible','on');
+    hold on;
+    cmap = lines(length(postProcessingStruct));
+    uniquePairsPlotted_AR = zeros(0,2);
+    
+    for i = 1:length(postProcessingStruct)
+        thisPair = postProcessingStruct(i).Jcap;
+        if numel(thisPair) == 1
+            thisPair = [thisPair, thisPair];
+        elseif numel(thisPair) ~= 2
+            warning('Skipping malformed Jcap entry at index %d.', i);
+            continue;
+        end
+        % skip if no data
+        if ~isfield(postProcessingStruct(i),'area_ratio_at_Fmin') || ...
+           isempty(postProcessingStruct(i).area_ratio_at_Fmin)
+            continue;
+        end
+    
+        sortedPair = sort(thisPair);
+        if any(ismember(uniquePairsPlotted_AR, sortedPair, 'rows')), continue; end
+        uniquePairsPlotted_AR = [uniquePairsPlotted_AR; sortedPair];
+    
+        xdata = postProcessingStruct(i).phi;
+        ydata = postProcessingStruct(i).psi;
+        zdata = postProcessingStruct(i).area_ratio_at_Fmin;
+    
+        % same symmetric-psi handling
+        if abs(thisPair(1) - thisPair(2)) < 1e-12
+            if abs(thisPair(1) - 0.0010) < 1e-12
+                ydata(:) = 1;
+            else
+                ydata(:) = 0;
+            end
+        end
+    
+        % length + finite guards
+        L = min([numel(xdata) numel(ydata) numel(zdata)]);
+        if L == 0, continue; end
+        xdata = xdata(1:L); ydata = ydata(1:L); zdata = zdata(1:L);
+        good = isfinite(xdata) & isfinite(ydata) & isfinite(zdata);
+        xdata = xdata(good); ydata = ydata(good); zdata = zdata(good);
+        if isempty(xdata), continue; end
+    
+        scatter3(xdata, ydata, zdata, 40, cmap(i,:), 'filled', ...
+            'DisplayName', sprintf('[%.4f, %.4f]', sortedPair(1), sortedPair(2)), ...
+            'HandleVisibility','on');
+    end
+    
+    xlabel('\phi'); ylabel('\psi'); zlabel('area ratio @ F_{min}  (real/analytic)');
+    title('Area ratio at F_{min} vs \phi vs \psi for all Jcap pairs');
+    legend('Location','best');
+    grid on; view(3);
+    savefig(hFigAR, fullfile(saveFigFolder, 'AreaRatioAtFmin_all_Jcap_together.fig'));
+
+%% %% 3D Scatter for ALL symmetric-pair points
+    % -------------------------------------------------------------
+    %  Gather ALL symmetric-pair points first
+    % -------------------------------------------------------------
+    xList   = [];   % Jcap value (same in P1 & P3)
+    yList   = [];   % phi
+    zList   = [];   % Fmin
+    jList   = [];   % Jintrin
+    kList   = [];   % keff
+    protAll = [];   % protein number for each point
+    arList  = [];   % <<< ADD: area ratio at Fmin
+    
+    for s = 1:numel(postProcessingStruct)
+        pair = postProcessingStruct(s).Jcap;
+        if abs(pair(1) - pair(2)) > 1e-12                     % skip asymmetric
+            continue
+        end
+    
+        xVal   = pair(1);                                      % scalar
+        yVals  = postProcessingStruct(s).phi(:);
+        zVals  = postProcessingStruct(s).Fmin(:);
+        jVals  = postProcessingStruct(s).Jintrin(:);
+        kVals  = postProcessingStruct(s).keff(:);
+
+        % <<< ADD: pull area_ratio_at_Fmin (fallback to NaN if missing)
+        if isfield(postProcessingStruct(s),'area_ratio_at_Fmin') && ...
+           ~isempty(postProcessingStruct(s).area_ratio_at_Fmin)
+            arVals = postProcessingStruct(s).area_ratio_at_Fmin(:);
+        else
+            arVals = nan(size(yVals));
+        end
+    
+        pnVec = postProcessingStruct(s).proteinNumber(:);
+        if numel(pnVec)==1,  pnVec = repmat(pnVec, numel(yVals), 1); end
+    
+        xList   = [xList ;  repmat(xVal , numel(yVals), 1)];
+        yList   = [yList ;  yVals];
+        zList   = [zList ;  zVals];
+        jList   = [jList ;  jVals];
+        kList   = [kList ;  kVals];
+        protAll = [protAll;  pnVec];
+        arList  = [arList ;  arVals];
+    end
+    
+    % -------------------------------------------------------------
+    %  Plot once per protein number
+    % -------------------------------------------------------------
+    protUnique = unique(protAll);
+    cmap       = lines(numel(protUnique));
+    
+    hFigSym = figure('Name','Fmin_symPairs','Visible','on'); hold on;
+    
+    for k = 1:numel(protUnique)
+        pn   = protUnique(k);
+        mask = (protAll == pn);
+    
+        scatter3(xList(mask), yList(mask), zList(mask), ...
+                 60, cmap(k,:), 'filled', 'DisplayName', 'Computational data');
+    end
+
+    % ===== Smooth interpolated surface over all points (no fit) =====
+% ===== Single power-law fitted surface over all points (fit) =====
+% Model: Fmin = A * phi^alpha * Jprot^beta
+
+% Collect all points
+xAll = xList(:);  yAll = yList(:);  zAll = zList(:);
+
+% Keep only valid points for log-fit (must be positive)
+good = isfinite(xAll) & isfinite(yAll) & isfinite(zAll);
+xFit = xAll(good);
+yFit = yAll(good);
+zFit = zAll(good);
+
+% ================================================================
+% ANCHOR: interpolated surface from scattered data
+% ================================================================
+
+% Create a regular grid in (x,y)
+nx = 140;
+ny = 140;
+[xg, yg] = meshgrid(linspace(min(xFit), max(xFit), nx), ...
+                    linspace(min(yFit), max(yFit), ny));
+
+% Interpolant from scattered data
+% interpolation method: 'natural' is usually smooth and stable
+% extrapolation method: 'none' avoids inventing values outside data support
+Finterp = scatteredInterpolant(xFit, yFit, zFit, 'natural', 'none');
+
+% Evaluate interpolated surface on grid
+zg = Finterp(xg, yg);
+
+% Optional but recommended:
+% Clip surface to convex hull of data so only supported region is shown
+K  = convhull(xFit, yFit);
+IN = inpolygon(xg, yg, xFit(K), yFit(K));
+zg(~IN) = NaN;
+
+% Draw the half-transparent interpolated surface under the points
+set(gcf,'Renderer','opengl');
+sH = surf(xg, yg, zg, ...
+    'EdgeColor','none', ...
+    'FaceAlpha',0.55, ...
+    'DisplayName','Interpolated surface');
+
+shading interp;
+material dull;
+lighting gouraud;
+camlight headlight;
+
+% Keep color scale consistent with original z range
+caxis([min(zFit) max(zFit)]);
+colormap(parula);
+
+fprintf('Interpolated surface created using scatteredInterpolant.\n');
+% ================================================================
+
+    
+    xlabel('$J_{\mathrm{prot}}\;\left[\frac{1}{nm}\right]$', ...
+           'Interpreter','latex', ...
+           'FontSize',40, ...
+           'Color','red', ...
+           'FontWeight','bold');
+    ylabel('\phi', 'FontSize',40, 'Color','red', 'FontWeight','bold');
+    zlabel('$F_{\min}\;\left[\frac{k_{\mathrm{B}}T}{\mathrm{nm}^{2}}\right]$', ...
+           'Interpreter','latex', ...
+           'FontSize',40, ...
+           'Color','red', ...
+           'FontWeight','bold');
+    title('Fmin VS \phi VS J_{prot} for symmetric J_{prot} pairs', 'Color','red', 'FontWeight','bold');
+    grid on; view(3);
+
+    
+    % ===========================================
+    legend('Location','best');
+    
+    savefig(hFigSym, fullfile(saveFigFolder, ...
+        sprintf('Fmin_symPairs.fig')));
+
+       %% 3D Scatter for symmetric pairs with Z = Fmin / (keff * Jintrin^2)
+    % Compute normalized Z safely
+    zNorm = zList ./ (kList .* (jList.^2));
+    isGood = isfinite(zNorm) & (kList ~= 0);   % guard against 0, NaN, Inf
+
+    hFigSymNorm = figure('Name','Fmin_over_keff_Jintrin2_symPairs','Visible','on'); 
+    hold on;
+
+    % Reuse protUnique & cmap from the previous section if they exist; else compute.
+    if ~exist('protUnique','var') || ~exist('cmap','var') || isempty(protUnique)
+        protUnique = unique(protAll);
+        cmap       = lines(numel(protUnique));
+    end
+
+    for k = 1:numel(protUnique)
+        pn   = protUnique(k);
+        mask = (protAll == pn) & isGood;
+
+        if any(mask)
+            scatter3( xList(mask), yList(mask), zNorm(mask), ...
+                      60, cmap(k,:), 'filled', ...
+                      'DisplayName', 'Computational data' );
+        end
+    end
+
+    % ===== Smooth interpolated surface (no fitting) =====
+xAll = xList(isGood);
+yAll = yList(isGood);
+zAll = zNorm(isGood);
+
+if ~isempty(xAll)
+    % Regular grid
+    nx = 140; ny = 140;
+    [xg, yg] = meshgrid(linspace(min(xAll),max(xAll),nx), ...
+                        linspace(min(yAll),max(yAll),ny));
+
+    % Interpolate (biharmonic 'v4' is very smooth). Alternative: scatteredInterpolant.
+    zg = griddata(xAll, yAll, zAll, xg, yg, 'v4');
+
+    % Clip to convex hull of data
+    K  = convhull(xAll, yAll);
+    IN = inpolygon(xg, yg, xAll(K), yAll(K));
+    zg(~IN) = NaN;
+
+    % Draw surface under points
+    set(gcf,'Renderer','opengl');
+    sH = surf(xg, yg, zg, 'EdgeColor','none', 'FaceAlpha',0.55, ...
+              'DisplayName','Interpolated surface');
+    shading interp; material dull; lighting gouraud; camlight headlight;
+
+    % Color scale from data
+    caxis([min(zAll) max(zAll)]);
+    colormap(parula);
+end
+% ====================================================
+
+
+    xlabel('$J_{\mathrm{prot}}\;\left[\frac{1}{nm}\right]$', ...
+           'Interpreter','latex', ...
+           'FontSize',40, ...
+           'Color','red', ...
+           'FontWeight','bold');
+    ylabel('\phi', 'FontSize',40, 'Color','red', 'FontWeight','bold');
+    zlabel('$\displaystyle \frac{F_{\min}}{k_{\mathrm{eff}}\,J_{\mathrm{int}}^{2}}$', ...
+           'Interpreter','latex', ...
+           'FontSize',40, 'Color','red', 'FontWeight','bold');
+    title('Ratio of F_{min} (C) and theory constant k_{eff} J_{int}^2 for symmetric J_{prot} pairs', 'Color','red', 'FontWeight','bold');
+    grid on; view(3);
+    legend('Location','best');
+
+    savefig(hFigSymNorm, fullfile(saveFigFolder, ...
+        sprintf('Fmin_over_keff_Jintrin2_symPairs.fig')));
+
+        %% 3D Scatter for symmetric pairs: k_eff
+    hFigSymK = figure('Name','keff_symPairs','Visible','on'); 
+    hold on;
+
+    % Reuse protUnique & cmap if present; otherwise compute them
+    if ~exist('protUnique','var') || isempty(protUnique)
+        protUnique = unique(protAll);
+    end
+    if ~exist('cmap','var') || isempty(cmap)
+        cmap = lines(numel(protUnique));
+    end
+
+    goodK = isfinite(kList);
+    for k = 1:numel(protUnique)
+        pn   = protUnique(k);
+        mask = (protAll == pn) & goodK;
+
+        if any(mask)
+            scatter3( xList(mask), yList(mask), kList(mask), ...
+                      60, cmap(k,:), 'filled', ...
+                      'DisplayName', 'Computational data' );
+        end
+    end
+
+    % ===== Overlay surface Z = 1/(1 - phi)  (no parameters) =====
+xAll = xList(goodK);
+yAll = yList(goodK);
+kAll = kList(goodK);
+
+% guard: avoid phi >= 1
+valid = isfinite(xAll) & isfinite(yAll) & isfinite(kAll) & (yAll < 0.9999);
+xAll = xAll(valid);  yAll = yAll(valid);  kAll = kAll(valid);
+
+% Grid in (Jcap, phi). Z does not depend on Jcap by design.
+nx = 140; ny = 140;
+xg = linspace(min(xAll), max(xAll), nx);
+yg = linspace(min(yAll), min(0.999, max(yAll)), ny);
+[Xg, Yg] = meshgrid(xg, yg);
+
+Zg = 1 ./ (1 - Yg);     % <- the requested surface (no fitting)
+
+% Clip to convex hull of the data in (x, phi)
+K  = convhull(xAll, yAll);
+IN = inpolygon(Xg, Yg, xAll(K), yAll(K));
+Zg(~IN) = NaN;
+
+% Draw semi-transparent surface under points
+set(gcf,'Renderer','opengl');
+sH = surf(Xg, Yg, Zg, ...
+    'EdgeColor','none', 'FaceAlpha',0.55, ...
+    'DisplayName','$\mathrm{Theory\ surface:}\ \frac{1}{1-\phi}$');
+shading interp; material dull; lighting gouraud; camlight headlight;
+
+% Keep color scale compatible with your data
+caxis([min(kAll) max(kAll)]);
+colormap(parula);
+% ==============================================================
+
+
+    xlabel('$J_{\mathrm{prot}}\;\left[\frac{1}{nm}\right]$', ...
+           'Interpreter','latex', ...
+           'FontSize',40, ...
+           'Color','red', ...
+           'FontWeight','bold');
+    ylabel('\phi', 'FontSize',40, 'Color','red', 'FontWeight','bold');
+    zlabel('K_{eff} [k_{B}T]', 'FontSize',40, 'Color','red', 'FontWeight','bold');
+    title('k_{eff} for symmetric J_{prot} pairs', 'Color','red', 'FontWeight','bold');
+    grid on; view(3);
+    lgd = legend('show');
+    lgd.Interpreter = 'latex';
+
+    savefig(hFigSymK, fullfile(saveFigFolder, ...
+        sprintf('Keff_symPairs.fig')));
+
+
+    %% 3D Scatter for symmetric pairs: J_{intrin}
+    hFigSymJ = figure('Name','Jintrin_symPairs','Visible','on'); 
+    hold on;
+
+    goodJ = isfinite(jList);
+    for k = 1:numel(protUnique)
+        pn   = protUnique(k);
+        mask = (protAll == pn) & goodJ;
+
+        if any(mask)
+            scatter3( xList(mask), yList(mask), jList(mask), ...
+                      60, cmap(k,:), 'filled', ...
+                      'DisplayName', 'Computational data' );
+        end
+    end
+
+    % ===== Overlay model surface: J_intrin = phi * Jcap (no fit) =====
+    xAll = xList(goodJ);   % Jcap
+    yAll = yList(goodJ);   % phi
+    zAll = jList(goodJ);   % Jintrin
+
+    % --- Mean squared error between model and data (same points) ---
+    % Model evaluated at the data points:
+    zModelData = (xAll .* yAll);
+    diffJ      = zAll - zModelData;
+    validErr   = isfinite(diffJ);
+    if any(validErr)
+        mseJ = mean( diffJ(validErr).^2 );
+    else
+        mseJ = NaN;
+    end
+    % ---------------------------------------------------------------
+
+    if ~isempty(xAll) && ~isempty(yAll)
+        % Regular grid in (Jcap, phi)
+        nx = 140; ny = 140;
+        xg = linspace(min(xAll), max(xAll), nx);
+        yg = linspace(min(yAll), max(yAll), ny);
+        [Xg, Yg] = meshgrid(xg, yg);
+
+        % Exact model surface
+        Zg = Yg .* Xg;
+
+        % Clip to convex hull of available (x,phi) data
+        K  = convhull(xAll, yAll);
+        IN = inpolygon(Xg, Yg, xAll(K), yAll(K));
+        Zg(~IN) = NaN;
+
+        % Draw semi-transparent surface under the points
+        set(gcf,'Renderer','opengl');
+        sModel = surf(Xg, Yg, Zg, ...
+            'EdgeColor','none', 'FaceAlpha',0.55, ...
+            'DisplayName','Additive model: J_{int} = \phi \cdot J_{prot}');
+        shading interp; material dull; lighting gouraud; camlight headlight;
+
+        % Keep color scale compatible with data (optional)
+        if ~isempty(zAll)
+            lo = min(zAll(isfinite(zAll)));
+            hi = max(zAll(isfinite(zAll)));
+            if isfinite(lo) && isfinite(hi) && lo < hi
+                caxis([lo hi]);
+            end
+        end
+        colormap(parula);
+    end
+    % ===============================================================
+
+    xlabel('$J_{\mathrm{prot}}\;\left[\frac{1}{nm}\right]$', ...
+           'Interpreter','latex', ...
+           'FontSize',40, ...
+           'Color','red', ...
+           'FontWeight','bold');
+    ylabel('\phi', 'FontSize',40, 'Color','red', 'FontWeight','bold');
+    zlabel('$J_{\mathrm{int}}\;\left[\frac{1}{nm}\right]$', ...
+           'Interpreter','latex', ...
+           'FontSize',40, ...
+           'Color','red', ...
+           'FontWeight','bold');
+    title('J_{int} for symmetric J_{prot} pairs - Theory VS Computations', ...
+          'Color','red', 'FontWeight','bold');
+
+    % ---- Put "value ± error" style textbox on the figure ----
+    if isfinite(mseJ)
+        rmseJ = sqrt(mseJ);   % root-mean-square error
+
+        axJ = gca;
+    txtStr = sprintf(['$\\mathrm{RMSE\\,(simulated\\ }J_{\\mathrm{int}}\\mathrm{\\ vs\\ model)}$' newline ...
+                  '$= %.3e\\ \\mathrm{nm}^{-1}$'], rmseJ);
+
+        text(axJ, 0.02, 0.95, txtStr, ...
+            'Units','normalized', ...
+            'Interpreter','latex', ...
+            'FontSize',30, ...
+            'FontWeight','bold', ...
+            'Color','black', ...
+            'BackgroundColor','w', ...   % white textbox
+            'EdgeColor','k', ...         % black frame
+            'LineWidth',1.5, ...
+            'Margin',6);                 % padding inside box
+    end
+
+
+    % --------------------------------------------------
+
+    grid on; view(3);
+    legend('Location','best');
+
+    savefig(hFigSymJ, fullfile(saveFigFolder, ...
+        sprintf('Jintrin_symPairs.fig')));
+
+
+%% 3D Scatter for symmetric pairs: Area ratio @ Fmin (percent) + interpolated surface
+% Axes: Z = Area ratio [%], X = phi, Y = Jcap
+hFigSymAR = figure('Name','AreaRatioAtFmin_symPairs','Visible','on'); hold on;
+
+% Convert to percent
+arListPct = 100 .* arList;
+
+% Points (grouped by proteinNumber)
+for k = 1:numel(protUnique)
+    pn   = protUnique(k);
+    mask = (protAll == pn) & isfinite(yList) & isfinite(xList) & isfinite(arListPct);
+    if any(mask)
+        % X = phi (yList), Y = Jcap (xList), Z = Area ratio [%]
+        scatter3( yList(mask), xList(mask), arListPct(mask), ...
+                  60, cmap(k,:), 'filled', 'DisplayName','Data' );
+    end
+end
+
+% ---- Interpolated surface (no fit) ----
+xAll = yList(:);   % X = phi
+yAll = xList(:);   % Y = Jcap
+zAll = arListPct(:);  % Z = Area ratio [%]
+good = isfinite(xAll) & isfinite(yAll) & isfinite(zAll);
+xAll = xAll(good);  yAll = yAll(good);  zAll = zAll(good);
+
+if ~isempty(xAll)
+    nx = 140; ny = 140;
+    [xg, yg] = meshgrid(linspace(min(xAll), max(xAll), nx), ...
+                        linspace(min(yAll), max(yAll), ny));
+    zg = griddata(xAll, yAll, zAll, xg, yg, 'v4');  % smooth biharmonic
+
+    % clip to convex hull (avoid inventing outside data)
+    K  = convhull(xAll, yAll);
+    IN = inpolygon(xg, yg, xAll(K), yAll(K));
+    zg(~IN) = NaN;
+
+    set(gcf,'Renderer','opengl');
+    surf(xg, yg, zg, 'EdgeColor','none', 'FaceAlpha',0.55, ...
+         'DisplayName','Interpolated surface');
+    shading interp; material dull; lighting gouraud; camlight headlight;
+
+    caxis([min(zAll) max(zAll)]);
+    colormap(parula);
+end
+% ---------------------------------------
+
+xlabel('\phi', 'FontSize',40, 'Color','red', 'FontWeight','bold');                 % X
+ylabel('$J_{\mathrm{prot}}\;\left[\frac{2}{R_{\mathrm{protein}}}\right]$', ...
+           'Interpreter','latex', ...
+           'FontSize',40, ...
+           'Color','red', ...
+           'FontWeight','bold'); % Y
+zlabel('$100 \times \frac{\mathrm{real\ total\ area}-\mathrm{analytic\ total\ area}}{\mathrm{analytic\ total\ area}}$', ...
+       'Interpreter','latex', 'FontSize',40, 'Color','red', 'FontWeight','bold');
+                        % Z
+ztickformat('%.2f%%');   % <-- show percent ticks on Z
+
+title('Area ratio vs \phi vs J_{cap} (symmetric pairs)', ...
+      'Color','red', 'FontWeight','bold');
+grid on; view(3);
+legend('Location','best');
+
+savefig(hFigSymAR, fullfile(saveFigFolder, 'AreaRatioAtFmin_symPairs.fig'));
+
+
+
+end
+
+function printMaxVariability(postProcessingStruct)
+% printMaxVariability
+%   Scan postProcessingStruct and print:
+%     • max Variability_Mean  (width / mean ·100)
+%     • max Variability_Median(width / median·100)
+%
+% Assumes each element contains
+%     .Variability_Mean     – row-vector, one value per psi slice (in %)
+%     .Variability_Median   – row-vector, same size, (in %)
+%     .psi                  – matching psi values
+%     .Jcap                 – 1×2 curvature pair
+
+% ---------- helper to gather values safely ------------------------------
+    function [vals, psiVals, pairVals] = collectField(fieldName)
+        vals = []; psiVals = []; pairVals = [];
+        for s = 1:numel(postProcessingStruct)
+            if isfield(postProcessingStruct(s),fieldName) && ...
+               ~isempty(postProcessingStruct(s).(fieldName))
+
+                v   = postProcessingStruct(s).(fieldName)(:);  % column
+                psi = postProcessingStruct(s).psi(:);          % column
+                n   = numel(v);
+
+                vals     = [vals ; v];                                        %#ok<AGROW>
+                psiVals  = [psiVals ; psi];                                   %#ok<AGROW>
+                pairVals = [pairVals ; repmat(postProcessingStruct(s).Jcap,n,1)]; %#ok<AGROW>
+            end
+        end
+    end
+% -------------------------------------------------------------------------
+
+%% -- Max variability referenced to MEAN ---------------------------------
+[varMeanVals, psiMeanVals, pairMeanVals] = collectField('Variability_Mean');
+
+if isempty(varMeanVals)
+    fprintf('No Variability_Mean data found.\n');
+else
+    [maxMean, idxM] = max(varMeanVals);
+    bestPsiM  = psiMeanVals(idxM);
+    bestPairM = pairMeanVals(idxM,:);
+    fprintf('Max variability (mean-ref)   = %.3f %%   at psi = %.4f   for Jcap = [%.4f  %.4f]\n', ...
+            maxMean, bestPsiM, bestPairM(1), bestPairM(2));
+end
+
+%% -- Max variability referenced to MEDIAN -------------------------------
+[varMedVals, psiMedVals, pairMedVals] = collectField('Variability_Median');
+
+if isempty(varMedVals)
+    fprintf('No Variability_Median data found.\n');
+else
+    [maxMed, idxD] = max(varMedVals);
+    bestPsiD  = psiMedVals(idxD);
+    bestPairD = pairMedVals(idxD,:);
+    fprintf('Max variability (median-ref) = %.3f %%   at psi = %.4f   for Jcap = [%.4f  %.4f]\n', ...
+            maxMed, bestPsiD, bestPairD(1), bestPairD(2));
+end
+end
+
+function [meanMean, meanMed] = printMeanVariability(postProcessingStruct, doPlot)
+% printMeanVariability
+%   Print the overall arithmetic means of Variability_Mean and
+%   Variability_Median (in %), and optionally plot
+%       X = Jcap(1)+Jcap(2)     Y = Variability_Mean
+%
+% Inputs
+%   postProcessingStruct : struct array whose elements may contain
+%       .Variability_Mean   – 1×K vector, % per-slice
+%       .Variability_Median – 1×K vector, % per-slice
+%       .psi                – 1×K vector (unused here)
+%       .Jcap               – 1×2 curvature pair
+%   doPlot (optional)      : logical, default true
+%
+% Outputs
+%   meanMean  – mean(Variability_Mean)   (NaNs omitted)
+%   meanMed   – mean(Variability_Median) (NaNs omitted)
+
+if nargin < 2, doPlot = true; end
+
+% ---------- helper to gather values & associated Jcap pairs -------------
+    function [vals, pairs] = collectField(fieldName)
+        vals  = [];
+        pairs = [];
+        for s = 1:numel(postProcessingStruct)
+            if isfield(postProcessingStruct(s),fieldName) && ...
+               ~isempty(postProcessingStruct(s).(fieldName))
+
+                v = postProcessingStruct(s).(fieldName)(:);   % column
+                n = numel(v);
+
+                vals  = [vals  ; v];                                         %#ok<AGROW>
+                pairs = [pairs ; repmat(postProcessingStruct(s).Jcap,n,1)]; %#ok<AGROW>
+            end
+        end
+    end
+% ------------------------------------------------------------------------
+
+%% ----- Variability referenced to MEAN ---------------------------------
+[varMeanVals, pairMeanVals] = collectField('Variability_Mean');
+
+if isempty(varMeanVals)
+    fprintf('No Variability_Mean data found.\n');
+    meanMean = NaN;
+else
+    meanMean = mean(varMeanVals,'omitnan');
+    fprintf('Mean variability (mean-ref)   = %.3f %%   over %d data points\n', ...
+            meanMean, numel(varMeanVals));
+end
+
+%% ----- Variability referenced to MEDIAN -------------------------------
+[varMedVals, ~] = collectField('Variability_Median');
+
+if isempty(varMedVals)
+    fprintf('No Variability_Median data found.\n');
+    meanMed = NaN;
+else
+    meanMed = mean(varMedVals,'omitnan');
+    fprintf('Mean variability (median-ref) = %.3f %%   over %d data points\n', ...
+            meanMed, numel(varMedVals));
+end
+
+%% ----- Optional scatter-plot ------------------------------------------
+if doPlot && ~isempty(varMeanVals)
+    x = sum(pairMeanVals,2);     % Jcap(1)+Jcap(2) for each slice
+    figure;
+    scatter(x, varMeanVals,'filled');
+    xlabel('Jcap(1) + Jcap(2)');
+    ylabel('Variability\_Mean (%)');
+    title('Variability\_Mean vs Total Curvature');
+    grid on;
+end
+end
+
+function resultTable = addArcMetrics(resultTable)
+% ADDARCMETRICS
+% Adds per-row metrics based on the NEW arc columns:
+%   arc_AB, arc_AC, arc_AD, arc_AE, arc_BC, arc_CD, arc_DE
+% Outputs:
+%   resultTable.avgArc  - mean of available arcs (row-wise, ignores NaNs)
+%   resultTable.minArc  - min of available arcs (row-wise, ignores NaNs)
+
+    % Columns we expect now (order is stable)
+    expectedCols = {'arc_AB','arc_AC','arc_AD','arc_AE','arc_BC','arc_CD','arc_DE'};
+
+    % Keep only the ones that actually exist in the table (future-proof)
+    haveCols = intersect(expectedCols, resultTable.Properties.VariableNames, 'stable');
+
+    if isempty(haveCols)
+        error('addArcMetrics:NoArcColumns', ...
+             'None of the expected arc columns are present in resultTable.');
+    end
+
+    % Pull data as a numeric matrix (rows = samples, cols = arcs we found)
+    A = resultTable{:, haveCols};
+
+    % Convert non-numeric to numeric if needed (rare, but safer)
+    if ~isfloat(A)
+        A = double(A);
+    end
+
+    % Row-wise mean/min over available arcs, ignoring NaNs
+    avgArc = mean(A, 2, 'omitnan');
+    minArc = min(A, [], 2, 'omitnan');
+
+    % Attach to table
+    resultTable.avgArc = avgArc;
+    resultTable.minArc = minArc;
+
+    % (Optional) warn if any rows had all-NaN arcs
+    % allNaN = all(isnan(A),2);
+    % if any(allNaN)
+    %     warning('addArcMetrics:AllNaNRows', ...
+    %         'avgArc/minArc are NaN for rows: %s', mat2str(find(allNaN)));
+    % end
+end
+
+
+function [red_area, blue_area] = red_blue_protein_area(T)
+% RED/BLUE areas for P_in_model in {0,106,24,204,42}
+% Uses only A,C,D,E (B is excluded from both groups).
+
+    if ~istable(T), error('Expecting a table.'); end
+
+    P = T.P_in_model(:);
+
+    A = fillmissing(T.protein_base_area_A(:),'constant',0);
+    B = fillmissing(T.protein_base_area_B(:),'constant',0);
+    C = fillmissing(T.protein_base_area_C(:),'constant',0);
+    D = fillmissing(T.protein_base_area_D(:),'constant',0);
+    E = fillmissing(T.protein_base_area_E(:),'constant',0);
+
+    n = numel(P);
+    red_area  = zeros(n,1);
+    blue_area = zeros(n,1);
+
+    % 0: all red A,C,D,E
+    idx = (P == 0);
+    red_area(idx)  = A(idx) + B(idx) + C(idx) + D(idx) + E(idx);
+    blue_area(idx) = 0;
+
+    % 106: A blue ; C,D,E red
+    idx = (P == 106);
+    red_area(idx)  = B(idx) + C(idx) + D(idx) + E(idx);
+    blue_area(idx) = A(idx);
+
+    % 10:  B blue ; A,C,D,E red
+    idx = (P == 10);
+    red_area(idx)  = A(idx) + C(idx) + D(idx) + E(idx);
+    blue_area(idx) = B(idx);
+
+    % 204: D blue ; A,C,E red
+    idx = (P == 204);
+    red_area(idx)  = A(idx) + C(idx) + D(idx);
+    blue_area(idx) = B(idx) + E(idx);
+
+    % 42:  C,E blue ; A,D red
+    idx = (P == 42);
+    red_area(idx)  = A(idx) + B(idx) + E(idx);
+    blue_area(idx) = C(idx) + D(idx);
+end
+
+
+function result_table = update_P_in_model_from_curvatures(result_table, tol, energyTol)
+% UPDATE_P_IN_MODEL_FROM_CURVATURES
+% - Rewrites P_in_model per row using Curv_P1..Curv_P5 with rules:
+%   0) C1=C2=C3=C4=C5                        -> P=0
+%   1) C1~=C2,  C2=C3=C4=C5                  -> P=1
+%   2) C1=C2,   C2~=C3,  C3=C4=C5            -> P=2
+%   3) C1=C2=C4, C3~=C4, C3=C5               -> P=3
+%   4) C1=C2=C3=C4, C4~=C5                   -> P=4
+%   (rows not matching any rule keep their original P_in_model)
+% - Removes duplicate rows that have the same pair (plane_bending_energy, P_in_model).
+%
+% Inputs:
+%   tol       (optional) curvature equality tolerance, default 1e-12
+%   energyTol (optional) abs tolerance when comparing plane_bending_energy for duplicates.
+%             default 0 (requires exact equality). If >0, energies are rounded to nearest energyTol.
+%
+% Works for tables and struct arrays. Returns the cleaned table/struct.
+
+    if nargin < 2 || isempty(tol), tol = 1e-12; end
+    if nargin < 3 || isempty(energyTol), energyTol = 0; end
+    eq = @(a,b) abs(a - b) <= tol;
+
+    % ----- pull columns (table or struct) -----
+    isTab = istable(result_table);
+    if isTab
+        P  = result_table.P_in_model(:);
+        C1 = result_table.Curv_P1(:);
+        C2 = result_table.Curv_P2(:);
+        C3 = result_table.Curv_P3(:);
+        C4 = result_table.Curv_P4(:);
+        C5 = result_table.Curv_P5(:);
+        E  = result_table.plane_bending_energy(:);
+    else
+        P  = [result_table.P_in_model].';
+        C1 = vertcat(result_table.Curv_P1);
+        C2 = vertcat(result_table.Curv_P2);
+        C3 = vertcat(result_table.Curv_P3);
+        C4 = vertcat(result_table.Curv_P4);
+        C5 = vertcat(result_table.Curv_P5);
+        E  = vertcat(result_table.plane_bending_energy);
+    end
+
+    n    = numel(P);
+    newP = P;
+
+    finiteCurv = all(isfinite([C1 C2 C3 C4 C5]), 2);
+
+    % ----- apply your rules in order -----
+    cond0 = finiteCurv &  eq(C1,C2) & eq(C2,C3) & eq(C3,C4) & eq(C4,C5);
+    newP(cond0) = 0;
+
+    cond1 = finiteCurv & ~eq(C1,C2) &  eq(C2,C3) & eq(C3,C4) & eq(C4,C5);
+    newP(cond1) = 1;
+
+    cond2 = finiteCurv &  eq(C1,C2) & ~eq(C2,C3) &  eq(C3,C4) & eq(C4,C5);
+    newP(cond2) = 2;
+
+    cond3 = finiteCurv &  eq(C1,C2) &  eq(C1,C4) & ~eq(C3,C4) &  eq(C3,C5);
+    newP(cond3) = 3;
+
+    cond4 = finiteCurv &  eq(C1,C2) &  eq(C2,C3) &  eq(C3,C4) & ~eq(C4,C5);
+    newP(cond4) = 4;
+
+    % write back P_in_model
+    if isTab
+        result_table.P_in_model = newP;
+    else
+        for i = 1:n
+            result_table(i).P_in_model = newP(i);
+        end
+    end
+
+    % ----- remove duplicate rows on (plane_bending_energy, P_in_model) -----
+    % Build a stable 'keep' mask using a tolerant key for energy
+    keep = true(n,1);
+    seen = containers.Map('KeyType','char','ValueType','logical');
+
+    % helper to encode energy with tolerance (treat NaN as "NaN")
+    function s = encEnergy(x)
+        if isnan(x)
+            s = 'NaN';
+        elseif energyTol > 0
+            s = sprintf('%.0f', round(x / energyTol));  % bucketized
+        else
+            s = sprintf('%.17g', x);                    % exact
+        end
+    end
+
+    for i = 1:n
+        key = sprintf('%d|%s', newP(i), encEnergy(E(i)));
+        if isKey(seen, key)
+            keep(i) = false;   % drop duplicates, keep first occurrence
+        else
+            seen(key) = true;
+        end
+    end
+
+    % apply mask
+    if isTab
+        result_table = result_table(keep, :);
+    else
+        result_table = result_table(keep);
+    end
+end
+
+function closeAllProgressBars()
+% Close ANY waitbar-like figure from this or previous runs.
+    try
+        delete(findall(0,'Type','figure','Tag','TMWWaitbar'));           % MATLAB waitbars
+        delete(findall(0,'Type','figure','Tag','MyJcapWaitbar'));        % ours
+        delete(findall(0,'Type','figure','Name','Post-processing progress')); % by name
+    catch
+        % ignore errors if nothing to close
+    end
+end
+
+function safeCloseWaitbar(h)
+% Safely close a specific waitbar handle.
+    if ~isempty(h) && isvalid(h) && isgraphics(h)
+        try delete(h); end
+    end
+end
+
+
+function [pairsFound] = find_opposite_pairs(curvTuples, tol)
+% FIND_OPPOSITE_PAIRS  Find 5-tuples like [a b b b b] and [b a a a a].
+% curvTuples: N×5 numeric array
+% tol       : tolerance for equality (default 1e-12)
+%
+% pairsFound: cell array of matched pairs {tuple1, tuple2}
+
+    if nargin < 2, tol = 1e-12; end
+    pairsFound = {};
+
+    % normalize to within tolerance
+    Q = @(x) round(x./tol);
+
+    % make dictionary of tuples
+    n = size(curvTuples,1);
+    for i = 1:n
+        t = curvTuples(i,:);
+        uniqVals = unique(Q(t));
+        if numel(uniqVals) == 2
+            % check if it is a "4+1 split"
+            counts = histcounts(Q(t), [uniqVals; max(uniqVals)+1]);
+            if any(counts == 1) && any(counts == 4)
+                % majority and minority values
+                majVal = uniqVals(counts==4);
+                minVal = uniqVals(counts==1);
+
+                % construct the opposite tuple (swap roles)
+                opp = zeros(1,5);
+                opp(:) = minVal;   % fill with minority
+                opp(1) = majVal;   % put majority once (position arbitrary)
+
+                % check if opp exists in curvTuples
+                if ismember(Q(opp), Q(curvTuples), 'rows')
+                    pairsFound{end+1,1} = t; %#ok<AGROW>
+                    pairsFound{end,2}   = opp; %#ok<AGROW>
+                end
+            end
+        end
+    end
+end
+
+
+function resultTable = squash_curv_columns(resultTable)
+% Remove Curv_P2 and shift the others:
+%   Curv_P3 -> Curv_P2
+%   Curv_P4 -> Curv_P3
+%   Curv_P5 -> Curv_P4
+
+    if ismember('Curv_P2', resultTable.Properties.VariableNames)
+        resultTable.Curv_P2 = []; % delete the column
+    end
+
+    % Now rename the remaining ones
+    if ismember('Curv_P3', resultTable.Properties.VariableNames)
+        resultTable.Properties.VariableNames{strcmp(resultTable.Properties.VariableNames,'Curv_P3')} = 'Curv_P2';
+    end
+    if ismember('Curv_P4', resultTable.Properties.VariableNames)
+        resultTable.Properties.VariableNames{strcmp(resultTable.Properties.VariableNames,'Curv_P4')} = 'Curv_P3';
+    end
+    if ismember('Curv_P5', resultTable.Properties.VariableNames)
+        resultTable.Properties.VariableNames{strcmp(resultTable.Properties.VariableNames,'Curv_P5')} = 'Curv_P4';
+    end
+end
+
+%% **************************************************************************
+
+function reportMap = check_phi_variability(postProcessingStruct, varargin)
+% CHECK_PHI_VARIABILITY  Inspect φ (phi) grids **per Jcap pair**.
+%
+% reportMap = CHECK_PHI_VARIABILITY(S, 'TolAbs',1e-9, 'DoPlot',true, 'Sort',true, ...
+%                                   'GroupBy','auto', 'PairTol',0)
+%
+% INPUT
+%   postProcessingStruct : 1×N struct with fields .phi (1×M double) and Jcap pair fields
+%
+% PARAMS (name/value)
+%   'TolAbs'  : absolute tolerance for φ equality tests (default 1e-9)
+%   'DoPlot'  : plot overlay + per-index range bars per pair (default true)
+%   'Sort'    : sort each φ vector ascending before comparing (default true)
+%   'GroupBy' : 'auto' | cellstr of two field names (e.g., {'Jcap1','Jcap2'})
+%   'PairTol' : ABSOLUTE tolerance used **only** for matching Jcap pairs (default 0 = exact)
+%
+% OUTPUT
+%   reportMap : containers.Map  key -> struct with fields:
+%       .key, .pairAB (1x2), .idx (indices in S)
+%       .nTuples, .phiLens, .allLengthsEqual
+%       .nPhiRef, .phiRef, .rangePerIndex, .cvPctPerIndex
+%       .perTupleMaxAbsDiff, .perTupleMaxIdx, .offenders
+%
+% Prints a summary per pair and optionally plots per pair.
+
+% ---------- params ----------
+p = inputParser;
+p.addParameter('TolAbs', 1e-9, @(x)isnumeric(x)&&isscalar(x));
+p.addParameter('DoPlot', false,  @(x)islogical(x)||isscalar(x));
+p.addParameter('Sort',   true,  @(x)islogical(x)||isscalar(x));
+p.addParameter('GroupBy','auto');                    % 'auto' or {'FieldA','FieldB'}
+p.addParameter('PairTol', 0, @(x)isnumeric(x)&&isscalar(x)&&x>=0);  % ONLY for grouping pairs
+p.parse(varargin{:});
+TolAbs  = p.Results.TolAbs;
+DoPlot  = p.Results.DoPlot;
+doSort  = p.Results.Sort;
+GroupBy = p.Results.GroupBy;
+PairTol = p.Results.PairTol;
+
+DoPlot = false;
+
+S = postProcessingStruct;
+N = numel(S);
+if N==0, error('Empty struct.'); end
+
+% ---------- build group keys (Jcap pairs) ----------
+pairKeys = cell(1,N);
+pairAB   = nan(N,2);
+for i = 1:N
+    [pairKeys{i}, pairAB(i,:)] = make_pair_key_tol(S(i), GroupBy, PairTol);
+end
+
+[keyList, ~, ic] = unique(pairKeys, 'stable');
+groups = accumarray(ic(:), (1:N)', [], @(ix){ix});
+
+% ---------- iterate per pair ----------
+reportMap = containers.Map('KeyType','char','ValueType','any');
+
+for k = 1:numel(keyList)
+    idx = groups{k};
+    % Prepare φ vectors (optionally sorted)
+    phiCells = cell(1,numel(idx));
+    phiLens  = zeros(1,numel(idx));
+    for t = 1:numel(idx)
+        phi = S(idx(t)).phi(:).';
+        if doSort, phi = sort(phi); end
+        phiCells{t} = phi;
+        phiLens(t)  = numel(phi);
+    end
+
+    rep = struct();
+    rep.key              = keyList{k};
+    if all(~isnan(pairAB(idx,1)))
+        ab = unique(pairAB(idx,:),'rows','stable');  % canonical (a<=b) from key builder
+        rep.pairAB = ab(1,:);                        % 1x2
+    else
+        rep.pairAB = [NaN NaN];
+    end
+    rep.idx              = idx(:).';
+    rep.nTuples          = numel(idx);
+    rep.phiLens          = phiLens;
+    rep.allLengthsEqual  = all(phiLens == phiLens(1));
+    rep.nPhiRef          = max(phiLens);
+
+    % Stack to matrix (pad shorter with NaN if needed)
+    phiMat = nan(rep.nTuples, rep.nPhiRef);
+    for t = 1:rep.nTuples
+        phiMat(t,1:phiLens(t)) = phiCells{t};
+    end
+
+    % Per-index stats
+    rep.phiRef        = median(phiMat, 1, 'omitnan');
+    phiMax            = max(phiMat,[],1,'omitnan');
+    phiMin            = min(phiMat,[],1,'omitnan');
+    rep.rangePerIndex = phiMax - phiMin;
+    phiMean           = mean(phiMat,1,'omitnan');
+    phiStd            = std(phiMat,0,1,'omitnan');
+    rep.cvPctPerIndex = 100 * (phiStd ./ max(abs(phiMean), eps));
+
+    % Per-tuple max deviation from reference (median)
+    diffMat = abs(phiMat - rep.phiRef);
+    [mx, at] = max(diffMat, [], 2, 'includenan');
+    rep.perTupleMaxAbsDiff = mx.';  % row
+    rep.perTupleMaxIdx     = at.';  % row
+    rep.offenders          = idx(rep.perTupleMaxAbsDiff > TolAbs);
+
+    % ----- print summary for this pair -----
+    if all(~isnan(rep.pairAB))
+        pairLabel = sprintf('[%.6g %.6g]', rep.pairAB(1), rep.pairAB(2));
+    else
+        pairLabel = rep.key;
+    end
+    fprintf('\n[check_phi_variability] Pair %s\n', pairLabel);
+    fprintf('  Tuples: %d | φ lengths (min/median/max) = %d / %d / %d\n', ...
+        rep.nTuples, min(phiLens), median(phiLens), max(phiLens));
+    if ~rep.allLengthsEqual
+        fprintf('  WARNING: φ length differs within pair. Padding used for stats.\n');
+    end
+    [maxRange, worstCol] = max(rep.rangePerIndex);
+    fprintf('  Worst per-index spread  max(|φ|max−|φ|min) = %.3g  at index %d\n', maxRange, worstCol);
+
+    % top offenders (up to 5)
+    [sortedDiff, ordLocal] = sort(rep.perTupleMaxAbsDiff, 'descend');
+    showK = min(5, rep.nTuples);
+    fprintf('  Top %d tuples by max |φ−median| (TolAbs = %.1e):\n', showK, TolAbs);
+    for kk = 1:showK
+        ii = ordLocal(kk);
+        tupIdx = idx(ii);
+        J = get_pair_preview(S(tupIdx));
+        fprintf('    #%d (tuple %d)  Jcap=[%.4g %.4g]  max|Δφ|=%.3g  (at idx %d)\n', ...
+            kk, tupIdx, J(1), J(2), sortedDiff(kk), rep.perTupleMaxIdx(ii));
+    end
+    if ~isempty(rep.offenders)
+        fprintf('  FAILED tolerance: %d/%d tuples exceed TolAbs.\n', numel(rep.offenders), rep.nTuples);
+    else
+        fprintf('  All tuples within tolerance for this pair.\n');
+    end
+
+    % ----- optional plots per pair -----
+    if DoPlot
+        figure('Name', sprintf('phi overlay %s', pairLabel)); clf; hold on;
+        for t = 1:rep.nTuples
+            plot(phiMat(t,:), '-', 'DisplayName', sprintf('Tuple %d', idx(t)));
+        end
+        plot(rep.phiRef, 'k-', 'LineWidth', 2, 'DisplayName','median(φ)');
+        grid on; xlabel('index'); ylabel('\phi');
+        title(sprintf('\\phi across tuples (pair %s)', pairLabel), 'Interpreter','tex');
+        legend('Location','eastoutside'); hold off;
+
+        figure('Name', sprintf('phi range per index %s', pairLabel)); clf;
+        stem(rep.rangePerIndex, 'filled');
+        grid on; xlabel('index'); ylabel('range (max-min)');
+        title(sprintf('Per-index \\phi spread (pair %s)', pairLabel), 'Interpreter','tex');
+    end
+
+    reportMap(rep.key) = rep;
+end
+end
+
+function J = get_pair_preview(T)
+% Small helper to print a 1x2 Jcap preview for logs.
+if isfield(T,'Jcap') && isnumeric(T.Jcap) && numel(T.Jcap)==2
+    J = sort(T.Jcap(:).'); return
+end
+cand = {'Jcap1','Jcap2'; 'Curv_P1','Curv_P2'; 'J1','J2'; 'Ja','Jb'};
+for r = 1:size(cand,1)
+    f1 = cand{r,1}; f2 = cand{r,2};
+    if isfield(T,f1) && isfield(T,f2)
+        J = sort([T.(f1) T.(f2)]);
+        return
+    end
+end
+J = [NaN NaN];
+end
+
+
+function [S2, phiRefMap] = unify_phi_grid_by_pair(Sin, varargin)
+% UNIFY_PHI_GRID_BY_PAIR
+% Unify phi across each unordered Jcap "family" {A,B}:
+%   {A,B} cluster includes tuples with pairs [A,A], [B,B], [A,B], [B,A].
+% - No interpolation or tolerance for phi (index-wise unification).
+% - Optional tolerance ONLY for grouping Jcap pairs (PairTol).
+%
+% Usage:
+%   [postProcessingStruct, phiRefMap] = unify_phi_grid_by_pair(postProcessingStruct, ...
+%       'Sort',true,'Ref','median','GroupBy','auto','PairTol',0);
+
+% ---------- parse args ----------
+p = inputParser;
+p.addParameter('Ref','median');                % 'median' | 'first'
+p.addParameter('Sort',true,@islogical);
+p.addParameter('GroupBy','auto');              % 'auto' or cellstr of field names
+p.addParameter('PairTol',0,@(x)isnumeric(x)&&isscalar(x)&&x>=0); % ABS tol for pair matching only
+p.addParameter('Save',false,@islogical);
+p.addParameter('OutName','postProcessingStruct_Intrinsic_phiUnified.mat',@ischar);
+p.parse(varargin{:});
+Ref     = p.Results.Ref;
+doSort  = p.Results.Sort;
+GroupBy = p.Results.GroupBy;
+PairTol = p.Results.PairTol;
+doSave  = p.Results.Save;
+outName = p.Results.OutName;
+
+% ---------- load or accept struct ----------
+if ischar(Sin) || isstring(Sin)
+    inFile = char(Sin);
+    data   = load(inFile);
+    if ~isfield(data,'postProcessingStruct')
+        error('File %s does not contain variable "postProcessingStruct".', inFile);
+    end
+    S = data.postProcessingStruct;
+else
+    S = Sin;
+    inFile = '';
+end
+if isempty(S), error('Empty struct.'); end
+
+% ---------- per-phi fields ----------
+perPhi = {'psi','Jintrin','keff','Fmin','Average_Arc','Min_Arc','kappaMicro','proteinNumber'};
+
+% ---------- optional sort & consistent reindex (no tolerance for phi) ----------
+for i = 1:numel(S)
+    phi = S(i).phi(:);
+    if isempty(phi), error('Tuple %d has empty phi.', i); end
+    if doSort
+        [phi_sorted, ord] = sort(phi, 'ascend');
+        S(i).phi = phi_sorted(:).';
+        for f = 1:numel(perPhi)
+            fn = perPhi{f};
+            if isfield(S(i),fn)
+                v = S(i).(fn);
+                if isnumeric(v) && numel(v)==numel(ord)
+                    S(i).(fn) = v(ord);
+                end
+            end
+        end
+    else
+        S(i).phi = phi(:).';
+    end
+end
+
+% ---------- extract numeric pairs (canonical a<=b), with PairTol only here ----------
+pairsAB  = nan(numel(S),2);
+for i = 1:numel(S)
+    [~, ab] = make_pair_key_tol(S(i), GroupBy, PairTol); % returns sorted [a b]
+    pairsAB(i,:) = ab;
+end
+if any(isnan(pairsAB(:)))
+    warning('Some tuples missing Jcap pair; those will form singleton clusters.');
+end
+
+% ---------- build {A,B} family clusters: include [A,A], [B,B], and [A,B]/[B,A] ----------
+% Step 1: gather all distinct canonical pairs
+AB_unique = unique(pairsAB, 'rows', 'stable');
+
+% Step 2: identify all hetero pairs (a<b) to define families {a,b}
+hetero = AB_unique(~any(isnan(AB_unique),2) & AB_unique(:,1) < AB_unique(:,2), :);
+
+% Step 3: for each hetero {a,b}, cluster indices whose pair is {a,b}, {a,a}, or {b,b}
+familyKeys = {};   % string labels for families
+familyIdx  = {};   % cell array of index vectors
+usedTuples = false(numel(S),1);
+
+for h = 1:size(hetero,1)
+    a = hetero(h,1); b = hetero(h,2);
+    % match with tolerance by quantizing to tol grid (only for matching)
+    [qa, qb] = quantize_pair(a, b, PairTol);
+
+    maskAB = match_pair_list(pairsAB, qa, qb, PairTol); % {a,b}
+    maskAA = match_pair_list(pairsAB, qa, qa, PairTol); % {a,a}
+    maskBB = match_pair_list(pairsAB, qb, qb, PairTol); % {b,b}
+
+    idxFamily = find(maskAB | maskAA | maskBB);
+    if ~isempty(idxFamily)
+        familyKeys{end+1} = sprintf('FAMILY[%.12g,%.12g]', qa, qb); %#ok<AGROW>
+        familyIdx{end+1}  = idxFamily; %#ok<AGROW>
+        usedTuples(idxFamily) = true;
+    end
+end
+
+% Step 4: any tuples not covered above become their own singleton families
+leftovers = find(~usedTuples);
+for t = leftovers(:).'
+    a = pairsAB(t,1); b = pairsAB(t,2);
+    if any(isnan([a b]))
+        key = sprintf('FAMILY[singleton_%d]', t);
+    else
+        [qa, qb] = quantize_pair(a, b, PairTol);
+        key = sprintf('FAMILY[%.12g,%.12g]', qa, qb);
+    end
+    familyKeys{end+1} = key; %#ok<AGROW>
+    familyIdx{end+1}  = t;   %#ok<AGROW>
+end
+
+% ---------- unify phi per family (AA/BB/AB/BA share φ) ----------
+S2 = S;
+phiRefMap = containers.Map('KeyType','char','ValueType','any');
+
+for k = 1:numel(familyKeys)
+    idx = familyIdx{k};
+    % ensure equal phi length in the family
+    Ls = arrayfun(@(t) numel(t.phi), S(idx));
+    if ~all(Ls == Ls(1))
+        error('Family %s has unequal φ lengths: %s', familyKeys{k}, mat2str(Ls));
+    end
+    L = Ls(1);
+
+    % collect phi rows
+    phiMat = zeros(numel(idx), L);
+    for j = 1:numel(idx)
+        phiMat(j,:) = S(idx(j)).phi;
+    end
+
+    % choose family phiRef by index
+    switch lower(Ref)
+        case 'median', phiRef = median(phiMat,1);
+        case 'first',  phiRef = S(idx(1)).phi;
+        otherwise,     error('Ref must be "median" or "first".');
+    end
+    phiRef = phiRef(:).';
+
+    % assign to all tuples in family
+    for j = 1:numel(idx)
+        S2(idx(j)).phi = phiRef;
+    end
+    phiRefMap(familyKeys{k}) = phiRef;
+
+    % report
+    maxDev = max(max(abs(phiMat - phiRef),[],2));
+    fprintf('[unify_phi_grid_by_pair] %s | n=%d | L=%d | max |Δφ| = %.3g\n', ...
+        familyKeys{k}, numel(idx), L, max(maxDev));
+end
+
+% ---------- save (optional) ----------
+if doSave
+    if isempty(inFile)
+        outFile = outName;
+    else
+        outDir  = fileparts(inFile);
+        outFile = fullfile(outDir, outName);
+    end
+    postProcessingStruct = S2; %#ok<NASGU>
+    save(outFile,'postProcessingStruct');
+    fprintf('Saved unified struct to:\n  %s\n', outFile);
+end
+end
+
+% ====================== helpers (pair detection & matching) ======================
+function [key, ab_sorted] = make_pair_key_tol(T, GroupBy, tol)
+% Return canonical key string and sorted pair [a b]; quantization ONLY for key string.
+ab_sorted = [NaN NaN];
+
+% explicit fields
+if iscell(GroupBy)
+    vals = nan(1,numel(GroupBy));
+    ok = true;
+    for u = 1:numel(GroupBy)
+        fn = GroupBy{u};
+        if ~isfield(T,fn) || ~isscalar(T.(fn)) || ~isnumeric(T.(fn)), ok = false; break; end
+        vals(u) = T.(fn);
+    end
+    if ok && numel(vals)>=2
+        ab_sorted = sort(vals(1:2));
+        key = pair_key_string(ab_sorted, tol);
+        return
+    end
+end
+
+% auto: vector length-2
+vecCands = {'Jcap','pair','J','caps','curvPair'};
+for c = 1:numel(vecCands)
+    fn = vecCands{c};
+    if isfield(T,fn)
+        v = T.(fn);
+        if isnumeric(v) && isvector(v) && numel(v)==2
+            ab_sorted = sort(v(:).');
+            key = pair_key_string(ab_sorted, tol);
+            return
+        end
+    end
+end
+
+% auto: two scalars
+twoCands = {
+    'Jcap1','Jcap2';
+    'Curv_P1','Curv_P2';
+    'J1','J2';
+    'JcapA','JcapB';
+    'Cap1','Cap2';
+    'curv1','curv2';
+    'Ja','Jb';
+};
+for r = 1:size(twoCands,1)
+    f1 = twoCands{r,1}; f2 = twoCands{r,2};
+    if isfield(T,f1) && isfield(T,f2) && isscalar(T.(f1)) && isscalar(T.(f2)) ...
+            && isnumeric(T.(f1)) && isnumeric(T.(f2))
+        ab_sorted = sort([T.(f1) T.(f2)]);
+        key = pair_key_string(ab_sorted, tol);
+        return
+    end
+end
+
+% fallback
+warning('unify_phi_grid_by_pair:autodetectFailed', ...
+    'Could not detect a Jcap pair; using singleton key.');
+key = sprintf('Jcap[singleton_%s]', char(java.util.UUID.randomUUID));
+end
+
+function key = pair_key_string(ab_sorted, tol)
+a = ab_sorted(1); b = ab_sorted(2);
+if any(isnan([a b])), key = 'Jcap[NaN,NaN]'; return; end
+if tol > 0
+    qa = round(a / tol) * tol;
+    qb = round(b / tol) * tol;
+    key = sprintf('Jcap[%.12g,%.12g]', qa, qb);
+else
+    key = sprintf('Jcap[%.12g,%.12g]', a, b);
+end
+end
+
+function [qa, qb] = quantize_pair(a, b, tol)
+if tol > 0
+    qa = round(a / tol) * tol;
+    qb = round(b / tol) * tol;
+else
+    qa = a; qb = b;
+end
+% ensure canonical order
+if qb < qa, tmp = qa; qa = qb; qb = tmp; end
+end
+
+function mask = match_pair_list(pairsAB, a, b, tol)
+% match rows of pairsAB (sorted a<=b) to target {a,b} using ONLY PairTol.
+if tol > 0
+    mask = abs(pairsAB(:,1) - a) <= tol & abs(pairsAB(:,2) - b) <= tol;
+else
+    mask = pairsAB(:,1) == a & pairsAB(:,2) == b;
+end
+end
+
+
+
+%% ******************************************************************************************
+
+function honey = make_honeycomb_from_postStruct(inputMatPath, varargin)
+% MAKE_HONEYCOMB_FROM_POSTSTRUCT
+% Build and SAVE a "honey" struct (one element per Jcap family & ratio).
+% Each row has:
+%   Jcap  : [A B] (1x2 double, A<=B)
+%   tuple : 1x4 double
+%             - HOMO rows (ratio=0): original tuple4 ([A A A A] or [B B B B])
+%             - HETERO rows (ratios 11/12/13/14/23/43): [A B A B] (AB-orientation)
+%   RATIO : 0 | 11 | 13 | 15
+%   PHI   : 1xL double
+%   PSI   : 1xL double
+%   Fmin  : 1xL double (weighted sum per recipe across components)
+
+% -------------------------- optional params ---------------------------
+p = inputParser;
+p.addParameter('OutName','postProcessingStruct_Intrinsic_honey.mat',@ischar);
+p.addParameter('Debug',true,@(x)islogical(x)||isscalar(x));
+p.addParameter('LogFile','',@ischar);
+p.parse(varargin{:});
+OutName = p.Results.OutName;
+VERBOSE = logical(p.Results.Debug);
+logPath = char(p.Results.LogFile);
+
+% -------------------------- logger setup ------------------------------
+fid = [];
+if ~isempty(logPath)
+    try
+        [ldir,~,~] = fileparts(logPath);
+        if ~isempty(ldir) && ~exist(ldir,'dir'), mkdir(ldir); end
+        fid = fopen(logPath,'w');
+        if fid < 0, fid = []; end
+    catch, fid = []; end
+end
+cleanupFID = onCleanup(@() safeClose(fid)); %#ok<NASGU>
+
+% -------------------------- load input --------------------------------
+data = load(inputMatPath);
+if ~isfield(data,'postProcessingStruct')
+    error('File %s does not contain variable "postProcessingStruct".', inputMatPath);
+end
+S = data.postProcessingStruct;
+N = numel(S);
+if N==0
+    honey = struct('Jcap',{},'tuple',{},'RATIO',{},'PHI',{},'PSI',{},'Fmin',{},'Jint',{});
+    return;
+end
+
+tol = 1e-12;
+
+% canonical pairs [a b] (sorted) per row
+pairs = nan(N,2);
+for i = 1:N
+    pairs(i,:) = get_pair_sorted(S(i));
+end
+
+% unique families {A,B} (A<=B)
+families = unique(sort(pairs,2),'rows','stable');
+
+% output collector
+honey = struct('Jcap',{},'tuple',{},'RATIO',{},'PHI',{},'PSI',{},'Fmin',{},'Jint',{});
+
+% -------------------------- iterate families --------------------------
+for f = 1:size(families,1)
+    a = families(f,1);  b = families(f,2);              % A<=B
+    famMask = ( (abs(pairs(:,1)-a)<=tol & abs(pairs(:,2)-b)<=tol) | ...
+                (abs(pairs(:,1)-b)<=tol & abs(pairs(:,2)-a)<=tol) );
+    idxFam  = find(famMask);
+
+    % NEW: also allow homo-A and homo-B rows for this family (for P=0)
+    homoMask = (abs(pairs(:,1)-a)<=tol & abs(pairs(:,2)-a)<=tol) | ...
+               (abs(pairs(:,1)-b)<=tol & abs(pairs(:,2)-b)<=tol);
+    idxFamHomo = unique([idxFam; find(homoMask)]);
+
+    dbg('\n[FAMILY %d] Jcap family {A,B} = {%.6g, %.6g}\n', f, a, b);
+
+    % -----------------------------------------------------------
+    % 1) HOMO rows: pass-through (ratio = 0)
+    % -----------------------------------------------------------
+    for j = idxFam(:).'
+        if is_homo_tuple(S, j, tol) && check_fields(S(j), {'phi','psi','Fmin','tuple4'})
+            H.Jcap  = [a b];
+            H.tuple = vecrow(S(j).tuple4);     % original homo tuple
+            H.RATIO = 0;
+            H.PHI   = vecrow(S(j).phi);
+            H.PSI   = vecrow(S(j).psi);
+            H.Fmin  = vecrow(S(j).Fmin);
+            H.Jint  = vecrow(S(j).Jint);       % JINT
+            honey(end+1) = H; %#ok<AGROW>
+            dbg('  HOMO row -> tuple=[%s] | len(phi)=%d | pn(mode)=%s\n', ...
+                vec2str(H.tuple), numel(H.PHI), showpn(S(j)));
+        end
+    end
+
+    % -----------------------------------------------------------
+    % 2) HETERO rows: build per recipe (11,12,13,14,23,43)
+    %     NOTE: each component uses ONE orientation only
+    % -----------------------------------------------------------
+    if abs(a-b) > tol
+        ratioTags = {'11','13','15'};
+        for rt = 1:numel(ratioTags)
+            tag = ratioTags{rt};
+            R   = hc_recipe(tag);
+
+            dbg('[RATIO %s]\n', tag);
+
+            % ---- choose one orientation per component; accumulate Σ w_i*F_i ----
+            phiRef    = [];
+            Fsum      = [];
+            Jsum      = [];     % JINT
+            term_desc = {};   % for pretty Σ line
+            for c = 1:numel(R.comp)
+                Pwant = R.comp(c).P;
+                w     = R.comp(c).w;
+                orient_pref = 'AUTO';
+                if isfield(R.comp(c),'orient'), orient_pref = upper(string(R.comp(c).orient)); end
+
+                % search set: include homo rows for P=0
+                idxSearch = idxFam;
+                if Pwant==0, idxSearch = idxFamHomo; end
+
+                patAB = tuple_for(Pwant, a, b, 'AB');   % [A B A B], [A B A A], ...
+                patBA = tuple_for(Pwant, a, b, 'BA');   % [B A B A], [B A B B], ...
+
+                dbg('  component #%d: P=%d, w=%.12g\n', c, Pwant, w);
+                dbg('    want AB = [%s]\n', vec2str(patAB));
+                dbg('    want BA = [%s]\n', vec2str(patBA));
+
+                chosen = '';
+                F_ch   = [];
+                J_ch   = [];   % JINT
+
+                % try AB?
+                if orient_pref=="AB" || orient_pref=="AUTO"
+                    idxAB = find_row(idxSearch, S, Pwant, patAB, tol, a, b);
+                    if ~isempty(idxAB) && check_fields(S(idxAB), {'phi','psi','Fmin','Jint'})
+                        dbg_row('AB', S(idxAB));
+                        F_ch = vecrow(S(idxAB).Fmin) * w;
+                        J_ch = vecrow(S(idxAB).Jint) * w; 
+                        chosen = 'AB';
+                        if isempty(phiRef), phiRef = vecrow(S(idxAB).phi); end
+                    end
+                end
+                % try BA if needed
+                if isempty(F_ch) && (orient_pref=="BA" || orient_pref=="AUTO")
+                    idxBA = find_row(idxSearch, S, Pwant, patBA, tol, a, b);
+                    if ~isempty(idxBA) && check_fields(S(idxBA), {'phi','psi','Fmin'})
+                        dbg_row('BA', S(idxBA));
+                        F_ch = vecrow(S(idxBA).Fmin) * w;
+                        chosen = 'BA';
+                        if isempty(phiRef), phiRef = vecrow(S(idxBA).phi); end
+                    end
+                end
+
+                if isempty(F_ch)
+                    dbg('    WARNING: P=%d not found in either orientation; skipping component.\n', Pwant);
+                    continue;
+                end
+
+                Fsum = plus_same(Fsum, F_ch);
+                Jsum = plus_same(Jsum, J_ch);      % JINT
+                term_desc{end+1} = sprintf('Fmin[P=%d](%s)*%.6g', Pwant, chosen, w); %#ok<AGROW>
+                dbg('      Using P=%d orientation=%s (weighted) | first=%.7g | last=%.7g\n', ...
+                    Pwant, chosen, F_ch(1), F_ch(end));
+            end
+
+            % φ fallback if needed
+            if isempty(phiRef)
+                phiRef = vecrow(S(idxFam(1)).phi);
+            end
+
+            % pretty final Σ line
+            if ~isempty(Fsum)
+                dbg('  === FINAL mix ===\n');
+                dbg('    %s = FminToT | first=%.7g | last=%.7g\n', ...
+                    strjoin(term_desc,' + '), Fsum(1), Fsum(end));
+            end
+
+            % ψ orientation for output rows
+            if a < b
+                psiRefAB = repmat(R.psi, size(phiRef));
+                psiRefBA = repmat(1 - R.psi, size(phiRef));
+            else
+                psiRefAB = repmat(1 - R.psi, size(phiRef));
+                psiRefBA = repmat(R.psi, size(phiRef));
+            end
+
+            % --- assemble the hetero honey row (AB orientation) ---
+            % --- AB row (as you already have) ---
+            H2.Jcap  = [a b];
+            H2.tuple = [a b a b];
+            H2.RATIO = str2double(tag);
+            H2.PHI   = phiRef;
+            H2.PSI   = repmat(R.psi, size(phiRef));
+            H2.Fmin  = fillF(Fsum, phiRef);
+            honey(end+1) = H2;
+            
+            % --- FULL recompute for the opposite orientation (BA) ---
+            [phiRef_BA, Fsum_BA] = mix_for_orientation('BA', R, ...
+                idxFam, idxFamHomo, a, b, tol, S);
+            
+            H3.Jcap  = [b a];
+            H3.tuple = [b a b a];
+            H3.RATIO = str2double(tag);
+            H3.PHI   = phiRef_BA;
+            H3.PSI   = repmat(1 - R.psi, size(phiRef_BA));   % flip ψ
+            H3.Fmin  = fillF(Fsum_BA, phiRef_BA);
+            honey(end+1) = H3;
+
+
+        end
+    end
+end
+
+% -------------------------- save output -------------------------------
+[inDir,~,~] = fileparts(inputMatPath);
+outPath = fullfile(inDir, OutName);
+postProcessingStruct = honey; %#ok<NASGU>
+save(outPath,'postProcessingStruct');
+fprintf('Saved honey struct (%d rows) to:\n  %s\n', numel(honey), outPath);
+
+% =========================== helpers ===========================
+    function out = fillF(Fsum_, phiRef_)
+        if isempty(Fsum_)
+            out = nan(size(phiRef_));
+        else
+            out = Fsum_;
+        end
+    end
+
+    function pairs_ = get_pair_sorted(T)
+        pairs_ = [NaN NaN];
+        if isfield(T,'Jcap') && isnumeric(T.Jcap) && numel(T.Jcap)==2
+            pairs_ = sort(T.Jcap(:)).';
+        end
+    end
+
+    function tf = is_homo_tuple(S_, idx, tol_)
+        tf = false;
+        if ~isfield(S_(idx),'tuple4') || isempty(S_(idx).tuple4), return; end
+        v = S_(idx).tuple4(:).';
+        tf = all(abs(v - v(1)) <= tol_);
+    end
+
+    function j = find_row(idxFam_, S_, Pwant_, tuplePattern_, tol_, A_, B_) %#ok<INUSL,INUSD>
+        j = [];
+        for kk = 1:numel(idxFam_)
+            ii = idxFam_(kk);
+            if ~isfield(S_(ii),'proteinNumber') || isempty(S_(ii).proteinNumber), continue; end
+            pn = mode(S_(ii).proteinNumber(:).');
+            if pn ~= Pwant_, continue; end
+            if ~isfield(S_(ii),'tuple4') || isempty(S_(ii).tuple4), continue; end
+            t4 = S_(ii).tuple4(:).';
+    
+            % ALWAYS require the exact (orientation-specific) tuple
+            if numel(t4)==numel(tuplePattern_) && all(abs(t4 - tuplePattern_) <= tol_)
+                j = ii; return;
+            end
+        end
+    end
+
+
+% ---------- explicit orientations per ratio ----------
+function R = hc_recipe(tag)
+    switch char(tag)
+
+        % 11 (1:1): average both orientations of P=42
+        case '11'
+            R.psi  = 1/2;
+            R.comp = [ struct('P',42,'w',0.5,'orient','AB') , ...
+                       struct('P',42,'w',0.5,'orient','BA') ];
+
+        % 14 (1:5): 
+        case '15'
+            R.psi  = 1/6;
+            R.comp = [ struct('P',10,'w',0.67,'orient','AB') , ...
+                       struct('P',204,'w',0.165,'orient','AB') , ...
+                       struct('P',106,'w',0.165,'orient','BA') ];
+
+        % 13 (1:3): P=204 AB (3/4) + P=106 BA (1/4)
+        case '13'
+            R.psi  = 1/4;
+            R.comp = [ struct('P',204,'w',0.75,'orient','AB') , ...
+                       struct('P',106,'w',0.25,'orient','BA') ];
+
+        otherwise
+            error('Unknown ratio tag "%s".', tag);
+    end
+end
+
+function pat = tuple_for(P, A, B, orient)
+    orient = upper(string(orient));
+    switch P
+        case 42
+            baseAB = [A A B B A]; baseBA = [B B A A B];
+        case 10
+            baseAB = [A B A A A]; baseBA = [B A B B B];
+        case 106
+            baseAB = [B A A A A]; baseBA = [A B B B B];
+        case 204
+            % For family {A,B}: 204 AB -> [B B A B], BA -> [A A B A]
+            baseAB = [B A B B A]; baseBA = [A B A A B];
+        case 0
+            % Homo rows
+            baseAB = [A A A A A]; baseBA = [B B B B B];
+        otherwise
+            error('tuple_for:UnknownP','Unsupported proteinNumber P=%d', P);
+    end
+    if orient=="AB", pat = baseAB;
+    elseif orient=="BA", pat = baseBA;
+    elseif orient=="AUTO"
+        pat = baseAB;  % not used here; kept for completeness
+    else
+        error('tuple_for:BadOrient','orient must be ''AB'', ''BA'', or ''AUTO''');
+    end
+end
+
+    function v = vecrow(v), v = v(:).'; end
+
+    function out = plus_same(a_,b_)
+        if isempty(a_), out = b_; return; end
+        if isempty(b_), out = a_; return; end
+        if ~isequal(size(a_), size(b_))
+            error('Vector size mismatch while summing Fmin components.');
+        end
+        out = a_ + b_;
+    end
+
+    function ok = check_fields(T, names)
+        ok = true;
+        for nn = 1:numel(names)
+            fn = names{nn};
+            if ~isfield(T,fn) || isempty(T.(fn)), ok=false; return; end
+        end
+    end
+
+    function s = vec2str(v)
+        v = v(:).';
+        s = strjoin(arrayfun(@(x)sprintf('%.6g',x), v, 'UniformOutput', false), ' ');
+    end
+
+    function s = showpn(T)
+        if isfield(T,'proteinNumber') && ~isempty(T.proteinNumber)
+            s = sprintf('%d', mode(vecrow(T.proteinNumber)));
+        else
+            s = 'NA';
+        end
+    end
+
+    function dbg(varargin)
+        if VERBOSE
+            try, fprintf(varargin{:}); catch, end
+        end
+        if ~isempty(fid)
+            try, fprintf(fid,varargin{:}); catch, end
+        end
+    end
+
+    function dbg_row(lbl, T)
+        pn = showpn(T);
+        dbg('    %s row | pn=%s | tuple=[%s]\n', lbl, pn, vec2str(vecrow(T.tuple4)));
+        dbg('      φ: L=%d | first=%.7g | last=%.7g\n', numel(T.phi), T.phi(1), T.phi(end));
+        dbg('      ψ: L=%d | first=%.7g | last=%.7g\n', numel(T.psi), T.psi(1), T.psi(end));
+        dbg('      Fmin raw: L=%d | first=%.7g | last=%.7g\n', numel(T.Fmin), T.Fmin(1), T.Fmin(end));
+    end
+
+
+
+    function safeClose(fid_)
+        if ~isempty(fid_) && fid_ > 0, try, fclose(fid_); catch, end, end
+    end
+
+function [phiRefOut, FsumOut] = mix_for_orientation(targetOrient, R, ...
+        idxFam, idxFamHomo, a, b, tol, S)
+% targetOrient: 'AB' → use R.comp orientations as-is
+%               'BA' → use the OPPOSITE orientation of each component
+    phiRefOut = [];
+    FsumOut   = [];
+
+    for c = 1:numel(R.comp)
+        Pwant = R.comp(c).P;
+        w     = R.comp(c).w;
+
+        % Declared orientation in the recipe
+        if isfield(R.comp(c),'orient')
+            odecl = upper(char(R.comp(c).orient));
+        else
+            odecl = 'AUTO';
+        end
+
+        % Flip orientation if we are building BA
+        if strcmpi(targetOrient,'BA')
+            switch odecl
+                case 'AB',  orient_pref = 'BA';
+                case 'BA',  orient_pref = 'AB';
+                otherwise,  orient_pref = 'AUTO';  % keep AUTO as AUTO
+            end
+        else
+            orient_pref = odecl;
+        end
+
+        % Where to search (allow homo rows for P=0)
+        idxSearch = idxFam;
+        if Pwant==0, idxSearch = idxFamHomo; end
+
+        % Desired tuples for both orientations
+        patAB = tuple_for(Pwant, a, b, 'AB');
+        patBA = tuple_for(Pwant, a, b, 'BA');
+
+        F_ch = [];
+
+        % Strict AB or BA?
+        if strcmp(orient_pref,'AB') || strcmp(orient_pref,'BA')
+            if strcmp(orient_pref,'AB')
+                idx = find_row(idxSearch, S, Pwant, patAB, tol, a, b);
+            else
+                idx = find_row(idxSearch, S, Pwant, patBA, tol, a, b);
+            end
+            if ~isempty(idx) && check_fields(S(idx), {'phi','psi','Fmin'})
+                if isempty(phiRefOut), phiRefOut = S(idx).phi(:).'; end
+                F_ch = S(idx).Fmin(:).' * w;
+            end
+        else
+            % AUTO: prefer target orientation first, then fallback
+            if strcmpi(targetOrient,'AB')
+                idx = find_row(idxSearch, S, Pwant, patAB, tol, a, b);
+                if isempty(idx)
+                    idx = find_row(idxSearch, S, Pwant, patBA, tol, a, b);
+                end
+            else
+                idx = find_row(idxSearch, S, Pwant, patBA, tol, a, b);
+                if isempty(idx)
+                    idx = find_row(idxSearch, S, Pwant, patAB, tol, a, b);
+                end
+            end
+            if ~isempty(idx) && check_fields(S(idx), {'phi','psi','Fmin'})
+                if isempty(phiRefOut), phiRefOut = S(idx).phi(:).'; end
+                F_ch = S(idx).Fmin(:).' * w;
+            end
+        end
+
+        % accumulate weighted sum
+        if ~isempty(F_ch)
+            if isempty(FsumOut)
+                FsumOut = F_ch;
+            else
+                if ~isequal(size(FsumOut), size(F_ch))
+                    error('Vector size mismatch while summing Fmin components.');
+                end
+                FsumOut = FsumOut + F_ch;
+            end
+        end
+    end
+
+    % Fallback φ if nothing was chosen
+    if isempty(phiRefOut)
+        phiRefOut = S(idxFam(1)).phi(:).';
+    end
+end
+
+end
+
+function honeyFiltered = filter_honey_by_ratio_and_save(matFilePath)
+% Load a .mat, find the struct array that has a RATIO field, keep only
+% rows whose RATIO is 0, 1, 11, or 13, and save back to the SAME file
+% under the SAME variable name.
+
+    keepRatios = [0 11 13 15];
+
+    % ---- load and detect the right variable ----
+    S = load(matFilePath);
+    names = fieldnames(S);
+
+    varName = '';
+    for i = 1:numel(names)
+        v = S.(names{i});
+        if isstruct(v) && ~isempty(v) && isfield(v,'RATIO')
+            varName = names{i};
+            break
+        end
+    end
+    if isempty(varName)
+        error('No struct with field "RATIO" found in %s.', matFilePath);
+    end
+
+    T = S.(varName);   % this is your honey-like struct array
+
+    % ---- build a mask: keep only desired RATIO values ----
+    % RATIO might be scalar or a vector; reduce to a single representative
+    getRatio = @(r) local_ratio_scalar(r);
+    ratios   = arrayfun(@(x) getRatio(x.RATIO), T);
+
+    mask = ismember(ratios, keepRatios);
+
+    honeyFiltered = T(mask);
+
+    % ---- save back under the SAME variable name ----
+    S.(varName) = honeyFiltered;  %#ok<STRNU>
+    save(matFilePath, '-struct', 'S', '-v7');
+
+    fprintf('Filtered "%s": kept %d/%d rows (RATIO in %s)\n', ...
+        varName, numel(honeyFiltered), numel(T), mat2str(keepRatios));
+end
+
+function r = local_ratio_scalar(R)
+% Convert a possibly-vector RATIO to a single scalar for filtering.
+% If all entries are (nearly) the same, use that value; otherwise NaN.
+    R = R(:);
+    if isempty(R)
+        r = NaN; return
+    end
+    u = unique(round(R,12));   % guard tiny FP noise
+    if numel(u)==1
+        r = u;
+    else
+        % mixed values in one row: treat as not matching any keep ratio
+        r = NaN;
+    end
+end
+
+
+
+
+%% ***************************************************************************************************************************
+function plotFinalScatter_honey(structPath, saveFigFolder)
+
+    data = load(structPath, 'postProcessingStruct');
+    rawStruct = data.postProcessingStruct;
+
+    % ---------- group by Jcap + ratio ----------
+    groupedStruct = struct();
+    keys = {};
+    for i = 1:numel(rawStruct)
+        thisPair = rawStruct(i).Jcap;
+        if numel(thisPair) == 1, thisPair = [thisPair thisPair]; end
+        sortedPair = sort(thisPair);
+
+        hr = honey2num(rawStruct(i).RATIO);
+
+        % include ratio in the key so each ratio is unique
+        key = sprintf('J_%.6f_%.6f_R%d', sortedPair(1), sortedPair(2), hr);
+        key = strrep(key, '.', '_');
+
+        if ~isfield(groupedStruct, key)
+            groupedStruct.(key).Jcap  = sortedPair;
+            groupedStruct.(key).phi   = rawStruct(i).PHI;
+            groupedStruct.(key).psi   = rawStruct(i).PSI;
+            groupedStruct.(key).Fmin  = rawStruct(i).Fmin;
+            groupedStruct.(key).ratio = hr;
+            keys{end+1} = key; %#ok<AGROW>
+        else
+            groupedStruct.(key).phi  = [groupedStruct.(key).phi,  rawStruct(i).PHI];
+            groupedStruct.(key).psi  = [groupedStruct.(key).psi,  rawStruct(i).PSI];
+            groupedStruct.(key).Fmin = [groupedStruct.(key).Fmin, rawStruct(i).Fmin];
+            groupedStruct.(key).ratio = hr;
+        end
+    end
+
+    % ---------- flatten into array ----------
+    postProcessingStruct = repmat(struct( ...
+        'Jcap', [], 'phi', [], 'psi', [], 'Fmin', [], 'ratio', []), ...
+        1, numel(keys));
+
+    for i = 1:numel(keys)
+        s = groupedStruct.(keys{i});
+        postProcessingStruct(i).Jcap  = s.Jcap;
+        postProcessingStruct(i).phi   = s.phi;
+        postProcessingStruct(i).psi   = s.psi;
+        postProcessingStruct(i).Fmin  = s.Fmin;
+        postProcessingStruct(i).ratio = s.ratio;
+    end
+
+    % ---------- normalize & drop NaNs/Inf ----------
+    flds = {'phi','psi','Fmin'};
+    for i = 1:numel(postProcessingStruct)
+        for f = 1:numel(flds)
+            postProcessingStruct(i).(flds{f}) = postProcessingStruct(i).(flds{f})(:).';
+        end
+        L = min(cellfun(@(fn)numel(postProcessingStruct(i).(fn)), flds));
+        for f = 1:numel(flds)
+            postProcessingStruct(i).(flds{f}) = postProcessingStruct(i).(flds{f})(1:L);
+        end
+        good = true(1,L);
+        for f = 1:numel(flds)
+            v = postProcessingStruct(i).(flds{f});
+            good = good & isfinite(v);
+        end
+        for f = 1:numel(flds)
+            postProcessingStruct(i).(flds{f}) = postProcessingStruct(i).(flds{f})(good);
+        end
+    end
+
+    %% 3D Scatter for Fmin
+    hFigFmin = figure('Name','FminPlot','Visible','on');
+    set(hFigFmin, 'WindowState', 'maximized');  % full screen
+    hold on;
+    cmap = lines(numel(postProcessingStruct));
+
+    for i = 1:numel(postProcessingStruct)
+        thisPair = postProcessingStruct(i).Jcap;
+        hr       = postProcessingStruct(i).ratio;
+        sortedPair = sort(thisPair);
+
+        xdata = postProcessingStruct(i).phi;
+        ydata = postProcessingStruct(i).psi;
+        zdata = postProcessingStruct(i).Fmin;
+
+        if abs(thisPair(1) - thisPair(2)) < 1e-12
+            if abs(thisPair(1) - 0.0010) < 1e-12, ydata(:) = 1; else, ydata(:) = 0; end
+        end
+
+        [xdata,ydata,zdata] = clean_xyz(xdata,ydata,zdata);
+        if isempty(xdata), continue; end
+
+        scatter3(xdata, ydata, zdata, 40, cmap(i,:), 'filled', ...
+            'DisplayName', sprintf('[%.4f, %.4f] ratio=%d', sortedPair(1), sortedPair(2), hr), ...
+            'HandleVisibility','on');
+    end
+    xlabel('\phi'); ylabel('\psi'); zlabel('Fmin');
+    title('Fmin vs \phi vs \psi for all Jcap pairs and ratios');
+    legend('Location','best'); grid on; view(3);
+    savefig(hFigFmin, fullfile(saveFigFolder, 'Fmin_all_Jcap_and_ratios.fig'));
+
+end
+
+% ===== helpers ============================================================
+function [x,y,z] = clean_xyz(x,y,z)
+    x = x(:); y = y(:); z = z(:);
+    L = min([numel(x) numel(y) numel(z)]);
+    if L == 0, x = []; y = []; z = []; return; end
+    x = x(1:L); y = y(1:L); z = z(1:L);
+    m = isfinite(x) & isfinite(y) & isfinite(z);
+    x = x(m); y = y(m); z = z(m);
+end
+
+function hr = honey2num(v)
+    if isnumeric(v)
+        hr = double(v);
+        return;
+    end
+    if isstring(v) || ischar(v)
+        s = upper(strtrim(char(v)));
+        if strcmp(s,'SYM')
+            hr = 0;
+        else
+            hr = str2double(s);
+            if isnan(hr), hr = NaN; end
+        end
+        return;
+    end
+    hr = NaN;
+end
+
+%% ********************************************************************************
+
+function outPath = build_families_mat_honey_simple(inputMatPath, varargin)
+% BUILD_FAMILIES_MAT_HONEY_SIMPLE
+% Implements the exact step list:
+%  1) list unique [AB]/[BA] pairs from Curv_P1..Curv_P5 tuples (print)
+%  2) take one pair at a time (print), unify PHI across AB & BA by ROW INDEX
+%  3) compute R=11,13,15 for AB using the given recipe (print every decision)
+%  4) repeat step 3 for BA (orientations flipped)
+%  5) move to next pair; copy [AA] and [BB] rows without mixing
+%
+% Output:
+%   Saves families_table (flat table with mixed energies) next to input .mat
+
+p = inputParser;
+p.addParameter('OutName','families_table.mat', @ischar);
+p.addParameter('Tol',1e-12, @(x)isnumeric(x)&&isscalar(x)&&x>0);
+p.addParameter('PHItol', 2e-3, @(x)isnumeric(x)&&isscalar(x)&&x>=0);
+p.addParameter('AreaTol', [],    @(x)isnumeric(x)&&isscalar(x)&&x>=0);   % NEW
+p.parse(varargin{:});
+OutName = p.Results.OutName;
+tol     = p.Results.Tol;
+PHItol  = p.Results.PHItol;
+AreaTol = p.Results.AreaTol;
+if isempty(AreaTol), AreaTol = PHItol; end   % default: match PHItol unless user sets differently
+
+
+
+fprintf('\n[honey] Loading: %s\n', inputMatPath);
+S = load(inputMatPath);
+
+% ---- locate a source table ----
+if isfield(S,'resultTable')
+    T = S.resultTable;
+elseif isfield(S,'postProcessingStruct') && isstruct(S.postProcessingStruct) ...
+   && isfield(S.postProcessingStruct,'resultTable')
+    T = S.postProcessingStruct.resultTable;
+else
+    % fallback: first table that is a table
+    fns = fieldnames(S); T = [];
+    for i=1:numel(fns), if istable(S.(fns{i})), T = S.(fns{i}); break; end, end
+    if isempty(T), error('No table found in %s', inputMatPath); end
+end
+
+% ==== ADD real_total_area ==============================================
+vars = T.Properties.VariableNames;
+
+% total_protein_base_area (fallback to sum of protein_base_area_* if absent)
+if ismember('total_protein_base_area', vars)
+    base_total = T.total_protein_base_area;
+else
+    mask = startsWith(vars, 'protein_base_area_', 'IgnoreCase', true);
+    if any(mask)
+        base_total = nsum(table2array(T(:, mask)));
+    else
+        base_total = zeros(height(T),1);
+    end
+end
+
+% membrane_area (fallback to zeros if absent)
+if ismember('membrane_area', vars)
+    mem = T.membrane_area;
+else
+    mem = zeros(height(T),1);
+end
+
+T.real_total_area = mem + base_total;
+
+% ensure analytic_total_area exists (no unify here; unify happens later like PHI)
+% if ~ismember('analytic_total_area', vars)
+%     T.analytic_total_area = T.real_total_area; % sensible default if missing
+% end
+% ======================================================================
+
+
+% ---- ensure needed columns exist ----
+needCols = {'Curv_P1_fam','Curv_P2_fam', ...          % <<— use family columns
+            'Curv_P1','Curv_P2','Curv_P3','Curv_P4','Curv_P5', ...
+            'plane_bending_energy','RATIO','P_in_model'};
+for c = needCols
+    if ~ismember(c{1}, T.Properties.VariableNames)
+        error('Input table is missing column "%s"', c{1});
+    end
+end
+
+% ---- filter out rows with NaN plane_bending_energy ----
+nanMask = isnan(T.plane_bending_energy);
+if any(nanMask)
+    fprintf('[honey] Filtering out %d rows with NaN plane_bending_energy\n', sum(nanMask));
+    T(nanMask,:) = [];
+end
+
+
+% ---- recalc plane_bending_energy per row ----
+if ismember('plane_bending_energy', T.Properties.VariableNames)
+    % base area
+    if ismember('total_protein_base_area', T.Properties.VariableNames)
+        base = T.total_protein_base_area;
+    else
+        mask = startsWith(T.Properties.VariableNames, 'protein_base_area_', 'IgnoreCase', true);
+        if any(mask)
+            base = nsum(table2array(T(:,mask)));
+        else
+            base = zeros(height(T),1);
+        end
+    end
+    % membrane area
+    if ismember('membrane_area', T.Properties.VariableNames)
+        mem = T.membrane_area;
+    else
+        mem = zeros(height(T),1);
+    end
+    den = mem + base;
+    ok = den > 0 & isfinite(T.plane_bending_energy);
+    T.plane_bending_energy(ok) = 2 .* T.plane_bending_energy(ok) ./ den(ok);
+end
+
+
+% ---- compute PHI once (we will also store explicit PHI column we control) ----
+T.PHI = phi_from_areas(T);   % uses total_protein_base_area if present
+
+% === ANCHOR: DEFINE-CURV5 (ADD THIS HERE, AFTER T.PHI = ...) =========
+curv5 = [T.Curv_P1 T.Curv_P2 T.Curv_P3 T.Curv_P4 T.Curv_P5];
+% =====================================================================
+
+% ---- identify unordered families from Curv_P1_fam / Curv_P2_fam ----
+N = height(T);
+
+% raw oriented family pair (as stored in table)
+P1f = T.Curv_P1_fam;   % oriented Curv_P1 for family
+P2f = T.Curv_P2_fam;   % oriented Curv_P2 for family
+
+% unordered family key A<=B
+Aab = min(P1f, P2f);
+Bab = max(P1f, P2f);
+
+% orientation of the row relative to the unordered {A,B}
+% AB if row stores (A,B); BA if row stores (B,A); SYM if A==B
+ori = strings(N,1);
+isHomo = abs(Aab - Bab) <= tol;
+ori(isHomo) = "SYM";
+mAB = ~isHomo & abs(P1f - Aab) <= tol & abs(P2f - Bab) <= tol;
+mBA = ~isHomo & abs(P1f - Bab) <= tol & abs(P2f - Aab) <= tol;
+ori(mAB) = "AB";
+ori(mBA) = "BA";
+% (if any leftover, default by comparison)
+ori(ori=="") = "AB";
+
+% ---- STEP 1: list unique oriented pairs from *_fam (print) ----
+orientedPairs = strings(N,1);
+for i=1:N
+    orientedPairs(i) = sprintf('[%.12g,%.12g]_%s', P1f(i), P2f(i), ori(i));
+end
+uOriented = unique(orientedPairs, 'stable');
+fprintf('\n[honey] Unique oriented pairs (from Curv_P1_fam/Curv_P2_fam) found (%d):\n', numel(uOriented));
+for k=1:numel(uOriented), fprintf('  %s\n', uOriented(k)); end
+
+% === ANCHOR: ORIENTED-PAIRS COPY/PASTE FILTER =========================
+% Build numeric oriented pairs EXACTLY as stored: AB row is [Curv_P1_fam Curv_P2_fam];
+% BA row is [Curv_P1_fam Curv_P2_fam] with opposite order.
+pairs_oriented_num = [P1f P2f];   % already oriented as the row stores them
+unique_oriented_pairs = unique(pairs_oriented_num, 'rows');
+
+fprintf('\n[honey] Unique ORIENTED pairs (as stored in table):\n');
+disp(unique_oriented_pairs);
+
+% ---- COPY/PASTE HERE WHICH ORIENTED PAIRS TO PROCESS (AB & BA!) ----
+% Leave empty [] to process ALL oriented pairs as stored.
+pairs_to_process = [ 
+% copy wanted pairs here, as two columns:  A B  (oriented as in table row)
+];
+
+% If user left it empty, default to "process all oriented pairs"
+if isempty(pairs_to_process)
+    pairs_to_process = unique_oriented_pairs;
+end
+% =====================================================================
+
+% ---- GROUP: unordered family key from Aab,Bab (A≤B) ----
+famKey = strings(N,1);
+for i=1:N
+    famKey(i) = sprintf('F[%.12g,%.12g]', Aab(i), Bab(i));
+end
+uFam   = unique(famKey, 'stable');
+
+% ---- collector for output rows ----
+rowsOut = [];
+
+% ===== iterate families =====
+for fk = 1:numel(uFam)
+    idxFam = find(famKey == uFam(fk));
+    A = Aab(idxFam(1));  B = Bab(idxFam(1));
+    fprintf('\n[honey] -------------------------------------------------\n');
+    fprintf('[honey] STEP 2: take pair  %s   (A=%.12g, B=%.12g)\n', uFam(fk), A, B);
+
+% === ANCHOR 2: per-family selection gates ==============================
+% A,B are the unordered pair for this family (A<=B)
+% We want AB target only if the oriented pair [A B] appears in pairs_to_process.
+% We want BA target only if the oriented pair [B A] appears in pairs_to_process.
+wantAB = ismember([A B], pairs_to_process, 'rows');
+wantBA = ismember([B A], pairs_to_process, 'rows');
+
+if ~(wantAB || wantBA)
+    fprintf('[honey]   skipping family {%.12g, %.12g} — neither [A B] nor [B A] in pairs_to_process\n', A, B);
+    continue
+end
+% ======================================================================
+
+
+
+    % === ANCHOR 3: homo (AA/BB) gated copy =================================
+    if abs(A - B) <= tol
+        % For SYM, the oriented list uses [A A]
+        if ismember([A A], pairs_to_process, 'rows')
+            fprintf('[honey]   homo pair (AA or BB) -> copy rows (selected).\n');
+            rowsOut = [rowsOut ; copy_rows(T, idxFam, A, B, ori(idxFam))]; %#ok<AGROW>
+        else
+            fprintf('[honey]   homo pair (AA or BB) -> SKIP (not selected).\n');
+        end
+        continue
+    end
+    % ======================================================================
+
+
+% ========= unify PHI / real_total_area / analytic_total_area by PHItol ==
+if ~(wantAB || wantBA)
+    fprintf('[honey]   φ/area unify skipped — family not selected.\n');
+else
+    % For this unordered family {A,B}, do it per RATIO,
+    % using the same PHItol rule for each field separately.
+    rList = unique(T.RATIO(idxFam), 'stable')';
+    for rNow = rList
+        maskR = (T.RATIO(idxFam) == rNow);
+
+        % Collect index arrays for each existing (P, orient) subgroup
+        PsHere   = unique(T.P_in_model(idxFam(maskR)), 'stable')';
+        groups   = {};              % global row indices into T
+        labels   = {};
+        lengths  = [];
+
+        for Pwant = PsHere
+            % AB
+            gAB = idxFam(maskR & (T.P_in_model(idxFam)==Pwant) & (ori(idxFam)=="AB"));
+            if ~isempty(gAB)
+                groups{end+1}  = gAB(:); %#ok<AGROW>
+                labels{end+1}  = sprintf('P=%d AB', Pwant); %#ok<AGROW>
+                lengths(end+1) = numel(gAB); %#ok<AGROW>
+            end
+            % BA
+            gBA = idxFam(maskR & (T.P_in_model(idxFam)==Pwant) & (ori(idxFam)=="BA"));
+            if ~isempty(gBA)
+                groups{end+1}  = gBA(:); %#ok<AGROW>
+                labels{end+1}  = sprintf('P=%d BA', Pwant); %#ok<AGROW>
+                lengths(end+1) = numel(gBA); %#ok<AGROW>
+            end
+        end
+
+        if isempty(groups)
+            fprintf('[honey]   (pair %s) R=%s : no AB/BA component groups found → skip.\n', uFam(fk), string(rNow));
+            continue
+        end
+
+        M = min(lengths);
+        if M == 0
+            fprintf('[honey]   (pair %s) R=%s : some empty groups → skip.\n', uFam(fk), string(rNow));
+            continue
+        end
+
+        fprintf('[honey]   unify(by tol) {A,B}=%s  R=%s  groups=%d  M=%d  PHItol=%.3g  AreaTol=%.3g\n', ...
+                uFam(fk), string(rNow), numel(groups), M, PHItol, AreaTol);
+        for g = 1:numel(groups)
+            fprintf('            group %2d: %-10s  n=%d\n', g, labels{g}, lengths(g));
+        end
+
+        % i-by-i (up to M): for each field, if span ≤ PHItol → set to mean
+        for irow = 1:M
+            idx_i = zeros(numel(groups),1);
+            for g = 1:numel(groups), idx_i(g) = groups{g}(irow); end
+
+            % ---- PHI ----
+            v_phi  = T.PHI(idx_i);
+            s_phi  = max(v_phi) - min(v_phi);
+
+            % ---- real_total_area ----
+            v_rta  = T.real_total_area(idx_i);
+            s_rta  = max(v_rta) - min(v_rta);
+
+            % ---- analytic_total_area ----
+            v_ata  = T.analytic_total_area(idx_i);
+            s_ata  = max(v_ata) - min(v_ata);
+
+            if isfinite(s_phi) && s_phi <= PHItol
+                T.PHI(idx_i) = mean(v_phi, 'omitnan');
+            end
+            if isfinite(s_rta) && s_rta <= AreaTol
+                T.real_total_area(idx_i) = mean(v_rta, 'omitnan');
+            end
+            if isfinite(s_ata) && s_ata <= AreaTol
+                T.analytic_total_area(idx_i) = mean(v_ata, 'omitnan');
+            end
+
+            if irow <= 6
+                fprintf('            i=%4d  span φ=%.3g  rTA=%.3g  aTA=%.3g  (means applied where span≤tol)\n', ...
+                        irow, s_phi, s_rta, s_ata);
+            end
+        end
+        
+    end
+end
+fprintf('[honey]   PHI/areas unified AB↔BA by PHItol on aligned indices.\n');
+% =========================================================================
+
+
+
+
+    % ========= STEP 3: compute R=11,13,15 ***for AB target*** =========
+    for R = [11 13 15]
+        % only process AB if [A B] is selected
+        if ~ismember([A B], pairs_to_process, 'rows')
+            fprintf('[honey]   skipping AB target [%.4f %.4f]\n', A, B);
+            continue
+        end
+
+        Rec = hc_recipe(R);   % your exact recipe (AB orientations “as-is”)
+        fprintf('[honey]   Mix for target=AB, ratio=%d  (psi=%.6g)\n', R, Rec.psi);
+
+% === ANCHOR: MIX-AB-BUILD (REPLACE THIS BLOCK) =========================
+compSets = cell(1, numel(Rec.comp));
+compLens = zeros(1, numel(Rec.comp));
+
+for c = 1:numel(Rec.comp)
+    Pwant = Rec.comp(c).P;
+    wantO = upper(string(Rec.comp(c).orient));   % 'AB' or 'BA' per recipe
+
+    cand  = idxFam(T.RATIO(idxFam)==R & T.P_in_model(idxFam)==Pwant);
+
+    if wantO=="AB"
+        mask = abs(T.Curv_P1_fam(cand)-A)<=tol & abs(T.Curv_P2_fam(cand)-B)<=tol;
+    else % "BA"
+        mask = abs(T.Curv_P1_fam(cand)-B)<=tol & abs(T.Curv_P2_fam(cand)-A)<=tol;
+    end
+    cand = cand(mask);
+
+    % INDEX-ONLY ORDERING: keep deterministic by row number
+    cand = sort(cand, 'ascend');
+
+    compSets{c} = cand(:);
+    compLens(c) = numel(cand);
+end
+
+% INDEX-ONLY ALIGNMENT: truncate all components to the shortest length
+M = min(compLens);
+for c = 1:numel(Rec.comp)
+    compSets{c} = compSets{c}(1:M);
+end
+% =====================================================================
+
+% === INDEX-CONSISTENCY-FILTER (PHItol/AreaTol) — AB ====================
+haveAvg = ismember('Avg_curv', T.Properties.VariableNames);
+good = true(M,1);
+
+for ii = 1:M
+    phi0 = T.PHI(compSets{1}(ii));
+    r0   = T.real_total_area(compSets{1}(ii));
+    a0   = T.analytic_total_area(compSets{1}(ii));
+    if haveAvg, avg0 = T.Avg_curv(compSets{1}(ii)); else, avg0 = NaN; end
+
+    for c2 = 2:numel(compSets)
+        if abs(T.PHI(compSets{c2}(ii)) - phi0) > PHItol
+            good(ii) = false; break;
+        end
+        % if abs(T.real_total_area(compSets{c2}(ii)) - r0) > AreaTol
+        %     good(ii) = false; break;
+        % end
+        % if abs(T.analytic_total_area(compSets{c2}(ii)) - a0) > AreaTol
+        %     good(ii) = false; break;
+        % end
+        % if haveAvg && (T.Avg_curv(compSets{c2}(ii)) ~= avg0)
+        %     good(ii) = false; break;
+        % end
+    end
+end
+
+for c2 = 1:numel(compSets)
+    compSets{c2} = compSets{c2}(good);
+end
+M = sum(good);
+if M==0
+    fprintf('[honey]     all indices inconsistent for ratio=%d → skipping.\n', R);
+    continue
+end
+% =====================================================================
+
+
+
+
+
+
+
+        % print the actual components we will use (index 1..M)
+        for i = 1:M
+            fprintf('[honey]     --- i=%d ---\n', i);
+            E_sum = 0;  parts = strings(1,0);
+            rTA_sum = 0;            % NEW: weighted real_total_area
+            aTA_sum = 0;            % NEW: weighted analytic_total_area
+            for c = 1:numel(Rec.comp)
+                rowIdx   = compSets{c}(i);
+                Pwant    = Rec.comp(c).P;
+                wantO    = upper(string(Rec.comp(c).orient));
+                w        = Rec.comp(c).w;
+                tuple    = curv5(rowIdx, :);
+                phiHere  = T.PHI(rowIdx);
+                Ecomp    = T.plane_bending_energy(rowIdx);
+                % === ANCHOR: PRINT-AVG_AB (REPLACE THIS PRINT) =======================
+                avgHere = NaN;
+                if ismember('Avg_curv', T.Properties.VariableNames)
+                    avgHere = T.Avg_curv(rowIdx);
+                end
+                fprintf(['          use comp: row=%d  P=%d  orient=%s  i=%d  φ=%.13g  ', ...
+                         'Avg_curv=%.6g  tuple=[%s]  E=%.7g  w=%.6g\n'], ...
+                        rowIdx, Pwant, wantO, i, phiHere, avgHere, num2str(tuple,' %.6g'), Ecomp, w);
+                % =====================================================================
+                E_sum = E_sum + w * Ecomp;
+                rTA_sum = rTA_sum + w * T.real_total_area(rowIdx);       % NEW
+                aTA_sum = aTA_sum + w * T.analytic_total_area(rowIdx);   % NEW
+                parts(end+1) = sprintf('%.6g*E[P%d %s]', w, Pwant, wantO); %#ok<AGROW>
+            end
+
+% === AVG-CURV (simple mean over components; φ consistency enforced) ===
+phi_i = T.PHI(compSets{1}(i));
+
+for c2 = 2:numel(compSets)
+    if abs(T.PHI(compSets{c2}(i)) - phi_i) > PHItol
+        error('φ mismatch > PHItol at i=%d (family [%.4f %.4f], R=%d): φ1=%.16g φ%d=%.16g, PHItol=%.3g', ...
+              i, A, B, R, phi_i, c2, T.PHI(compSets{c2}(i)), PHItol);
+    end
+end
+
+if ismember('Avg_curv', T.Properties.VariableNames)
+    % Collect component rows for this mixed point and take a plain mean
+    idxVec = arrayfun(@(cc) compSets{cc}(i), 1:numel(compSets));
+    acVec  = T.Avg_curv(idxVec);
+
+    valid = isfinite(acVec);
+    if any(valid)
+        avgcurv = mean(acVec(valid), 'omitnan');   % <-- simple (unweighted) average
+    else
+        avgcurv = NaN;
+    end
+else
+    avgcurv = NaN;
+end
+
+fprintf('          [avg_curv→out] Avg_curv_used(mean)=%.6g\n', avgcurv);
+% ======================================================================
+
+
+
+
+out = make_out_row(A,B,'AB',R, phi_i, E_sum, avgcurv, rTA_sum, aTA_sum);   % NEW args
+
+            rowsOut = [rowsOut ; out]; %#ok<AGROW>
+
+            fprintf('          ==> mixed(E) = %s = %.7g\n', strjoin(parts,' + '), E_sum);
+        end
+    end
+
+    % ========= STEP 4: compute R=11,13,15 ***for BA target*** =========
+    for R = [11 13 15]
+        % only process BA if [B A] is selected
+        if ~ismember([B A], pairs_to_process, 'rows')
+            fprintf('[honey]   skipping BA target [%.4f %.4f]\n', B, A);
+            continue
+        end
+
+        Rec = hc_recipe(R);   % will flip orientations for BA target
+        fprintf('[honey]   Mix for target=BA, ratio=%d  (psi=%.6g)\n', R, 1-Rec.psi);
+
+% === ANCHOR: MIX-BA-BUILD (REPLACE THIS BLOCK) =========================
+compSets = cell(1, numel(Rec.comp));
+compLens = zeros(1, numel(Rec.comp));
+
+for c = 1:numel(Rec.comp)
+    Pwant = Rec.comp(c).P;
+
+    % flip AB<->BA for BA target
+    odecl = upper(string(Rec.comp(c).orient));  % from recipe
+    wantO = "AB"; if odecl=="AB", wantO="BA"; end
+
+    cand  = idxFam(T.RATIO(idxFam)==R & T.P_in_model(idxFam)==Pwant);
+
+    if wantO=="AB"
+        mask = abs(T.Curv_P1_fam(cand)-A)<=tol & abs(T.Curv_P2_fam(cand)-B)<=tol;
+    else % "BA"
+        mask = abs(T.Curv_P1_fam(cand)-B)<=tol & abs(T.Curv_P2_fam(cand)-A)<=tol;
+    end
+    cand = cand(mask);
+
+    % INDEX-ONLY ORDERING
+    cand = sort(cand, 'ascend');
+
+    compSets{c} = cand(:);
+    compLens(c) = numel(cand);
+end
+
+% INDEX-ONLY ALIGNMENT
+M = min(compLens);
+for c = 1:numel(Rec.comp)
+    compSets{c} = compSets{c}(1:M);
+end
+% =====================================================================
+
+% === INDEX-CONSISTENCY-FILTER (PHItol/AreaTol) — BA ====================
+haveAvg = ismember('Avg_curv', T.Properties.VariableNames);
+good = true(M,1);
+
+for ii = 1:M
+    phi0 = T.PHI(compSets{1}(ii));
+    r0   = T.real_total_area(compSets{1}(ii));
+    a0   = T.analytic_total_area(compSets{1}(ii));
+    if haveAvg, avg0 = T.Avg_curv(compSets{1}(ii)); else, avg0 = NaN; end
+
+    for c2 = 2:numel(compSets)
+        if abs(T.PHI(compSets{c2}(ii)) - phi0) > PHItol
+            good(ii) = false; break;
+        end
+        % if abs(T.real_total_area(compSets{c2}(ii)) - r0) > AreaTol
+        %     good(ii) = false; break;
+        % end
+        % if abs(T.analytic_total_area(compSets{c2}(ii)) - a0) > AreaTol
+        %     good(ii) = false; break;
+        % end
+        % if haveAvg && (T.Avg_curv(compSets{c2}(ii)) ~= avg0)
+        %     good(ii) = false; break;
+        % end
+    end
+end
+
+for c2 = 1:numel(compSets)
+    compSets{c2} = compSets{c2}(good);
+end
+M = sum(good);
+if M==0
+    fprintf('[honey]     all indices inconsistent for ratio=%d → skipping.\n', R);
+    continue
+end
+% =====================================================================
+
+
+
+
+
+
+        for i = 1:M
+            fprintf('[honey]     --- i=%d ---\n', i);
+            E_sum = 0;  parts = strings(1,0);
+            rTA_sum = 0;            % NEW: weighted real_total_area
+            aTA_sum = 0;            % NEW: weighted analytic_total_area
+            for c = 1:numel(Rec.comp)
+                rowIdx   = compSets{c}(i);
+                Pwant    = Rec.comp(c).P;
+                wantO    = flip_orient(upper(string(Rec.comp(c).orient)));
+                w        = Rec.comp(c).w;
+                tuple    = curv5(rowIdx, :);
+                phiHere  = T.PHI(rowIdx);
+                Ecomp    = T.plane_bending_energy(rowIdx);
+                % === ANCHOR: PRINT-AVG_BA (REPLACE THIS PRINT) =======================
+                avgHere = NaN;
+                if ismember('Avg_curv', T.Properties.VariableNames)
+                    avgHere = T.Avg_curv(rowIdx);
+                end
+                
+                fprintf(['          use comp: row=%d  P=%d  orient=%s  i=%d  φ=%.13g  ', ...
+                         'Avg_curv=%.6g  tuple=[%s]  E=%.7g  w=%.6g\n'], ...
+                        rowIdx, Pwant, wantO, i, phiHere, avgHere, num2str(tuple,' %.6g'), Ecomp, w);
+                % =====================================================================
+                E_sum = E_sum + w * Ecomp;
+                rTA_sum = rTA_sum + w * T.real_total_area(rowIdx);       % NEW
+                aTA_sum = aTA_sum + w * T.analytic_total_area(rowIdx);   % NEW
+                parts(end+1) = sprintf('%.6g*E[P%d %s]', w, Pwant, wantO); %#ok<AGROW>
+            end
+
+% === AVG-CURV (simple mean over components; φ consistency enforced) ===
+phi_i = T.PHI(compSets{1}(i));
+
+for c2 = 2:numel(compSets)
+    if abs(T.PHI(compSets{c2}(i)) - phi_i) > PHItol
+        error('φ mismatch > PHItol at i=%d (family [%.4f %.4f], R=%d): φ1=%.16g φ%d=%.16g, PHItol=%.3g', ...
+              i, A, B, R, phi_i, c2, T.PHI(compSets{c2}(i)), PHItol);
+    end
+end
+
+if ismember('Avg_curv', T.Properties.VariableNames)
+    % Collect component rows for this mixed point and take a plain mean
+    idxVec = arrayfun(@(cc) compSets{cc}(i), 1:numel(compSets));
+    acVec  = T.Avg_curv(idxVec);
+
+    valid = isfinite(acVec);
+    if any(valid)
+        avgcurv = mean(acVec(valid), 'omitnan');   % <-- simple (unweighted) average
+    else
+        avgcurv = NaN;
+    end
+else
+    avgcurv = NaN;
+end
+
+fprintf('          [avg_curv→out] Avg_curv_used(mean)=%.6g\n', avgcurv);
+% ======================================================================
+
+
+
+out = make_out_row(A,B,'BA',R, phi_i, E_sum, avgcurv, rTA_sum, aTA_sum);   % NEW args
+
+            rowsOut = [rowsOut ; out]; %#ok<AGROW>
+
+            fprintf('          ==> mixed(E) = %s = %.7g\n', strjoin(parts,' + '), E_sum);
+        end
+    end
+end
+
+% ---- STEP 5: build families_table and save ----
+familiesTable = struct2table(rowsOut);
+[inDir,~,~] = fileparts(inputMatPath);
+outPath = fullfile(inDir, OutName);
+save(outPath, 'familiesTable','-v7');
+fprintf('\n[honey] Saved %d mixed rows → %s\n', height(familiesTable), outPath);
+
+end
+% ============================== helpers ===============================
+
+function PHI = local_phi(T)
+    % compute φ from areas if present, otherwise fill NaN
+    need = {'membrane_area','protein_base_area_A','protein_base_area_B', ...
+            'protein_base_area_C','protein_base_area_D','protein_base_area_E'};
+    if all(ismember(need, T.Properties.VariableNames))
+        base = nsum([T.protein_base_area_A,T.protein_base_area_B,T.protein_base_area_C, ...
+                     T.protein_base_area_D,T.protein_base_area_E]);
+        den  = base + T.membrane_area;
+        PHI  = nan(height(T),1);
+        m    = den>0; PHI(m) = base(m)./den(m);
+    else
+        PHI = nan(height(T),1);
+    end
+end
+
+function s = nsum(M)
+    if ~isfloat(M), M=double(M); end
+    M(~isfinite(M)) = 0;
+    s = sum(M,2,'omitnan');
+end
+
+function [A,B] = pair_from_tuple(v5, tol)
+    u = uniquetol(v5(:).', tol);
+    if isempty(u), A=NaN; B=NaN;
+    elseif numel(u)==1, A=u(1); B=u(1);
+    else, u=sort(u); A=u(1); B=u(end);
+    end
+end
+
+function o = detect_orientation(t5, P, A, B, tol)
+    if abs(A-B)<=tol, o="SYM"; return; end
+    patAB = tuple_for(P,A,B,'AB'); dAB = max(abs(t5 - patAB));
+    patBA = tuple_for(P,A,B,'BA'); dBA = max(abs(t5 - patBA));
+    if dAB<=tol && dBA>tol,  o="AB"; return; end
+    if dBA<=tol && dAB>tol,  o="BA"; return; end
+    % closest
+    if dAB<=dBA, o="AB"; else, o="BA"; end
+end
+
+function pat = tuple_for(P, A, B, orient)
+    orient = upper(string(orient));
+    switch P
+        case 42, baseAB = [A A B B A]; baseBA = [B B A A B];
+        case 10, baseAB = [A B A A A]; baseBA = [B A B B B];
+        case 106,baseAB = [B A A A A]; baseBA = [A B B B B];
+        case 204,baseAB = [B A B B A]; baseBA = [A B A A B];
+        case 0,  baseAB = [A A A A A]; baseBA = [B B B B B];
+        otherwise, baseAB = [A A B B A]; baseBA = [B B A A B];
+    end
+    if orient=="AB", pat=baseAB; else, pat=baseBA; end
+end
+
+% === ANCHOR: HC_RECIPE (REPLACE THIS BLOCK) ===========================
+function R = hc_recipe(tag)
+%HC_RECIPE  Mixing recipe used to build the honey rows.
+% Input TAG can be numeric (11,13,15) or char/'string'.
+%
+% Conventions
+% ----------
+% • Recipes below are written for a TARGET = **AB** row.
+%   (Calling code flips orientations when building BA target).
+% • ψ (psi) is the nominal blue fraction.
+
+    tag = string(tag);
+
+    switch tag
+        case "11"
+            % 1:1 — average the two P=42 orientations (symmetric “2B/4R” motif)
+            R.psi  = 1/2;
+            R.comp = [ struct('P',42,'w',0.5,'orient','AB') ...
+                     , struct('P',42,'w',0.5,'orient','BA') ];  % authored AB; BA is produced by caller via flip
+
+        case "15"
+            % 1:5 — matches your picture/example:
+            %   P=10  AB
+            %   P=204 AB
+            %   P=106 AB
+            R.psi  = 1/6;
+            R.comp = [ struct('P',10 ,'w',0.67 , 'orient','AB') ...
+                     , struct('P',204,'w',0.165, 'orient','AB') ...
+                     , struct('P',106,'w',0.165, 'orient','AB') ];
+
+        case "13"
+            % 1:3 — per picture:
+            %   P=204 AB
+            %   P=106 AB
+            R.psi  = 1/4;
+            R.comp = [ struct('P',204,'w',0.75, 'orient','AB') ...
+                     , struct('P',106,'w',0.25, 'orient','AB') ];
+
+        otherwise
+            error('Unknown ratio tag "%s".', tag);
+    end
+end
+% =====================================================================
+
+
+
+function s = flip_orient(s)
+    if s=="AB", s="BA"; elseif s=="BA", s="AB"; end
+end
+
+function out = make_out_row(A,B,orient,ratio,phi,E,avgcurv, rTA_mix, aTA_mix)
+% Construct a minimal row for families_table.
+% We synthesize areas so that φ recomputed from areas equals the stored PHI:
+%   set membrane_area=1; base_sum = φ/(1-φ); put it into protein_base_area_A.
+
+    if nargin < 8, rTA_mix = NaN; end    % NEW: optional
+    if nargin < 9, aTA_mix = NaN; end    % NEW: optional
+
+    if ~isfinite(phi) || phi<=0, mem=1; base=0; else, mem=1; base=phi/(1-phi); end
+    out = struct();
+    if orient=="AB"
+        out.Curv_P1 = A; out.Curv_P2 = B;
+    else
+        out.Curv_P1 = B; out.Curv_P2 = A;
+    end
+    out.radius_P1 = NaN;
+    out.Avg_curv  = avgcurv;
+    out.distance  = NaN;
+    out.plane_bending_energy = E;
+
+    % --- synthesized areas (to preserve φ)
+    out.total_area    = NaN;
+    out.membrane_area = mem;
+    out.protein_base_area_A = base;
+    out.protein_base_area_B = 0;
+    out.protein_base_area_C = 0;
+    out.protein_base_area_D = 0;
+    out.protein_base_area_E = 0;
+
+    % --- NEW: mixed areas, saved as separate columns ---
+    out.real_total_area_mix     = rTA_mix;   % NEW
+    out.analytic_total_area_mix = aTA_mix;   % NEW
+
+    out.arc_AB = 0; out.arc_AC = 0; out.arc_AE = 0;
+    out.arc_BC = 0; out.arc_CD = 0; out.arc_DE = 0;
+    out.PSI       = NaN;
+
+    if orient=="AB" || orient=="BA"
+        rec = hc_recipe(ratio);
+        if orient=="AB", out.PSI_honey = rec.psi; else, out.PSI_honey = 1 - rec.psi; end
+    else
+        out.PSI_honey = 1;
+    end
+    out.PHI       = phi;
+    out.RATIO     = ratio;
+    out.FamilyKey = sprintf('FAM[%.12g,%.12g]_%s', A, B, orient);
+    out.Orientation = string(orient);
+end
+
+
+function y = iff(cond,a,b)
+    if cond, y=a; else, y=b; end
+end
+
+
+function rows = copy_rows(T, idx, A, B, oriVec)
+% Copy raw rows for homo pairs into families_table-compatible structs.
+% Ratio is preserved from the source row; Avg_curv is copied as-is.
+rows(numel(idx),1) = make_out_row(A,B,"SYM", 1, 0, 0, 0); % prealloc with valid types
+for k = 1:numel(idx)
+    ii       = idx(k);
+    phi      = T.PHI(ii);
+    E        = T.plane_bending_energy(ii);
+    avgcurv  = NaN;
+    if ismember('Avg_curv', T.Properties.VariableNames)
+        avgcurv = T.Avg_curv(ii);
+    end
+    % Preserve row's ratio/orientation on output record
+    rows(k) = make_out_row(A,B,oriVec(k), T.RATIO(ii), phi, E, avgcurv, ...
+                       T.real_total_area(ii), T.analytic_total_area(ii));  % NEW last 2 args
+end
+end
+
+
+
+function PHI = phi_from_areas(T)
+% Compute φ = base / (membrane + base) per row.
+% Prefer column 'total_protein_base_area' if it exists; otherwise
+% sum any columns named 'protein_base_area_*'.
+
+    vars = T.Properties.VariableNames;
+
+    % base area
+    if ismember('total_protein_base_area', vars)
+        base = T.total_protein_base_area;
+    else
+        % fall back: sum all protein_base_area_* columns that exist
+        mask = startsWith(vars, 'protein_base_area_', 'IgnoreCase', true);
+        if any(mask)
+            base = nsum(table2array(T(:, mask)));
+        else
+            base = zeros(height(T),1);
+        end
+    end
+
+    % membrane area (use 0 if missing)
+    if ismember('membrane_area', vars)
+        mem = T.membrane_area;
+    else
+        mem = zeros(height(T),1);
+    end
+
+    den = mem + base;
+    PHI = nan(height(T),1);
+    ok  = isfinite(base) & isfinite(den) & den > 0;
+    PHI(ok) = base(ok) ./ den(ok);
+
+    % (optional) clamp numerical noise
+    PHI(PHI < 0) = 0;
+    PHI(PHI > 1) = 1;
+end
+
+
+function [fmin_corrected, did_corr, jLeft, jRight] = correct_negative_fmin_from_fit(fmin_fit, p2, jSamples, jStar)
+%CORRECT_NEGATIVE_FMIN_FROM_FIT
+% If fmin_fit < 0, take the two *closest* sample positions around the fit
+% minimum (jLeft < jStar < jRight), evaluate the *fitted polynomial* at those
+% two j's, and return their mean. Otherwise, keep the original fmin_fit.
+%
+% Inputs
+%   fmin_fit  : scalar, minimum value from the polynomial (may be < 0)
+%   p2        : [a b c] coefficients of quadratic fit  a*j^2 + b*j + c
+%   jSamples  : vector of sampled j locations (used only to pick left/right positions)
+%   jStar     : scalar, argmin of the quadratic = -b/(2a)
+%
+% Outputs
+%   fmin_corrected : mean of fitted values at the two closest neighbours (or original if >=0)
+%   did_corr       : logical flag (true if correction applied)
+%   jLeft,jRight   : the two neighbour j-positions used (NaN if not applicable)
+
+    fmin_corrected = fmin_fit;
+    did_corr       = false;
+    jLeft          = NaN;
+    jRight         = NaN;
+
+    % Positive or zero: no change
+    if ~(fmin_fit < 0)
+        return;
+    end
+
+    % Ensure sorted and unique for left/right lookup
+    js = unique(jSamples(:));
+    % nearest on each side of jStar
+    jLeftCandidates  = js(js < jStar);
+    jRightCandidates = js(js > jStar);
+
+    if isempty(jLeftCandidates) || isempty(jRightCandidates)
+        % cannot bracket the minimum with sample positions
+        fmin_corrected = NaN;
+        return;
+    end
+
+    % closest on each side
+    jLeft  = jLeftCandidates(end);   % max < jStar
+    jRight = jRightCandidates(1);    % min > jStar
+
+    % evaluate the *fit* (not raw points)
+    fL = polyval(p2, jLeft);
+    fR = polyval(p2, jRight);
+
+    % Optional outward search to the first positive values of the FIT
+    if ~(fL > 0 && fR > 0)
+        % walk outward symmetrically on each side if needed
+        iL = find(js == jLeft, 1, 'first');
+        iR = find(js == jRight, 1, 'first');
+        while (iL >= 1 && iR <= numel(js)) && ~(fL > 0 && fR > 0)
+            if ~(fL > 0) && iL > 1
+                iL = iL - 1;  jLeft  = js(iL);  fL = polyval(p2, jLeft);
+            end
+            if ~(fR > 0) && iR < numel(js)
+                iR = iR + 1;  jRight = js(iR); fR = polyval(p2, jRight);
+            end
+            if (iL == 1 && ~(fL > 0)) && (iR == numel(js) && ~(fR > 0))
+                break; % no positive neighbours on fit
+            end
+        end
+    end
+
+    if fL > 0 && fR > 0
+        fmin_corrected = 0.5*(fL + fR);
+        did_corr       = true;
+    else
+        % If still no positive neighbours on the fitted curve
+        fmin_corrected = NaN;
+    end
+end
+
+
+function [jLeft, jRight] = bracket_nearest(jGrid, j0)
+% Return the closest j to the left and right of j0 from a (possibly unsorted) grid.
+    jGrid = sort(jGrid(:));
+    jLeftCandidates  = jGrid(jGrid <  j0);
+    jRightCandidates = jGrid(jGrid >  j0);
+    if isempty(jLeftCandidates) || isempty(jRightCandidates)
+        jLeft = NaN; jRight = NaN; return;
+    end
+    jLeft  = jLeftCandidates(end);   % max < j0
+    jRight = jRightCandidates(1);    % min > j0
+end
